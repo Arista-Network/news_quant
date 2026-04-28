@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pandas
 pandas-ta
-FinanceDataReader
+finance-datareader
 pykrx
 feedparser
 beautifulsoup4
