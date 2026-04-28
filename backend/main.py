@@ -21,6 +21,10 @@ app.add_middleware(
 news_parser = NewsParser()
 quant_engine = QuantEngine()
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
 @app.get("/api/news")
 async def get_news_with_quant():
     """최신 뉴스 + 퀀트 인사이트 통합 API"""
