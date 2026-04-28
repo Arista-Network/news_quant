@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pandas
+pandas-ta
+FinanceDataReader
+pykrx
+feedparser
+beautifulsoup4
+lxml
+requests

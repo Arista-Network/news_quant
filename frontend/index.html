@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NewsQuant | AI 뉴스 & 퀀트 인사이트</title>
+    <meta name="description" content="주식 뉴스를 읽으면서 종목의 퀀트 지표와 스마트 머니 흐름을 한눈에 파악하세요.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 3v18h18" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/><path d="M7 14l4-4 4 4 5-6" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="logo-text"><em>News</em>Quant</span>
+            </div>
+            <nav class="tab-nav" id="tab-nav">
+                <button class="tab-btn active" data-tab="feed">뉴스 & 인사이트</button>
+                <button class="tab-btn" data-tab="heatmap">스마트 머니 맵</button>
+            </nav>
+            <div class="header-badge">LIVE</div>
+        </div>
+    </header>
+
+    <!-- Tab 1: News Feed -->
+    <main id="tab-feed" class="tab-content active">
+        <div class="feed-container">
+            <div class="feed-header">
+                <h1>오늘의 시장 뉴스</h1>
+                <p>기사를 읽으며 종목의 수급과 지표를 한눈에 파악하세요. 종목이 감지되면 퀀트 카드가 자동으로 붙습니다.</p>
+            </div>
+            <div id="loading-feed" class="loading-state">
+                <div class="spinner"></div>
+                <p>뉴스와 퀀트 데이터를 분석 중...</p>
+            </div>
+            <div id="news-feed" class="news-feed hidden"></div>
+        </div>
+    </main>
+
+    <!-- Tab 2: Smart Money Heatmap -->
+    <main id="tab-heatmap" class="tab-content">
+        <div class="feed-container">
+            <div class="feed-header">
+                <h1>스마트 머니 수급 맵</h1>
+                <p>외국인과 기관의 자금이 어디로 흘러가는지 한눈에 확인하세요. 블록이 클수록 순매수 금액이 큽니다.</p>
+            </div>
+            <div class="market-toggle">
+                <button class="market-btn active" data-market="KOSPI">코스피</button>
+                <button class="market-btn" data-market="KOSDAQ">코스닥</button>
+            </div>
+            <div id="loading-heatmap" class="loading-state hidden">
+                <div class="spinner"></div>
+                <p>수급 데이터를 수집 중...</p>
+            </div>
+            <div class="heatmap-wrapper">
+                <div id="heatmap-chart" style="width:100%;height:500px;"></div>
+            </div>
+            <div id="flow-table-section" class="table-section hidden">
+                <h3>상세 수급 데이터</h3>
+                <table id="flow-table">
+                    <thead>
+                        <tr><th>종목</th><th>외국인 순매수</th><th>기관 순매수</th><th>합계</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- News Template -->
+    <template id="news-tpl">
+        <article class="news-card">
+            <div class="news-body">
+                <div class="news-meta">
+                    <span class="news-source"></span>
+                    <span class="meta-dot">·</span>
+                    <span class="news-time"></span>
+                    <span class="sentiment-tag"></span>
+                </div>
+                <h2 class="news-title"><a href="#" target="_blank" rel="noopener"></a></h2>
+                <p class="news-summary"></p>
+            </div>
+            <div class="quant-section"></div>
+        </article>
+    </template>
+
+    <!-- Quant Card Template -->
+    <template id="quant-tpl">
+        <div class="quant-card">
+            <div class="qc-top">
+                <div class="qc-name-wrap">
+                    <span class="qc-name"></span>
+                    <span class="qc-ticker"></span>
+                </div>
+                <div class="qc-price-wrap">
+                    <span class="qc-price"></span>
+                    <span class="qc-change"></span>
+                </div>
+            </div>
+            <div class="qc-signal-row">
+                <span class="qc-signal-badge"></span>
+                <span class="qc-score-badge"></span>
+            </div>
+            <div class="qc-indicators">
+                <div class="ind-item"><span class="ind-label">RSI</span><div class="ind-bar-wrap"><div class="ind-bar rsi-bar"></div></div><span class="ind-val"></span></div>
+                <div class="ind-item"><span class="ind-label">MACD</span><span class="ind-val macd-val"></span></div>
+                <div class="ind-item"><span class="ind-label">스토캐스틱</span><div class="ind-bar-wrap"><div class="ind-bar stoch-bar"></div></div><span class="ind-val stoch-val"></span></div>
+            </div>
+            <div class="qc-smart-money">
+                <div class="sm-col">
+                    <span class="sm-lbl">외국인 (5일)</span>
+                    <span class="sm-val foreigner-val"></span>
+                </div>
+                <div class="sm-col">
+                    <span class="sm-lbl">기관 (5일)</span>
+                    <span class="sm-val institution-val"></span>
+                </div>
+                <div class="sm-col">
+                    <span class="sm-lbl">MA 배열</span>
+                    <span class="sm-val ma-status"></span>
+                </div>
+            </div>
+            <ul class="qc-reasons"></ul>
+        </div>
+    </template>
+
+    <script src="app.js"></script>
+</body>
+</html>
