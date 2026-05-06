@@ -223,6 +223,19 @@ class QuantEngine:
                         continue
 
                     is_multiindex = isinstance(day_df.columns, pd.MultiIndex)
+                    if found_days == 0:
+                        print(f"[수급맵] 컬럼 구조: {list(day_df.columns[:8])}")
+
+                    # 컬럼명 한 번만 탐색
+                    if is_multiindex:
+                        f_col = next((c for c in ['외국인합계', '외국인'] if (c, '순매수') in day_df.columns), None)
+                        i_col = next((c for c in ['기관합계', '기관'] if (c, '순매수') in day_df.columns), None)
+                    else:
+                        f_col = next((c for c in ['외국인합계', '외국인'] if c in day_df.columns), None)
+                        i_col = next((c for c in ['기관합계', '기관'] if c in day_df.columns), None)
+
+                    if found_days == 0:
+                        print(f"[수급맵] f_col={f_col}, i_col={i_col}, is_multi={is_multiindex}")
 
                     for ticker in day_df.index:
                         if ticker not in flow_accum:
@@ -230,20 +243,12 @@ class QuantEngine:
 
                         try:
                             if is_multiindex:
-                                f_net = int(day_df.loc[ticker, ('외국인', '순매수')] if ('외국인', '순매수') in day_df.columns else 0)
-                                i_net = int(day_df.loc[ticker, ('기관합계', '순매수')] if ('기관합계', '순매수') in day_df.columns else 0)
+                                f_net = int(day_df.loc[ticker, (f_col, '순매수')]) if f_col else 0
+                                i_net = int(day_df.loc[ticker, (i_col, '순매수')]) if i_col else 0
                             else:
                                 row = day_df.loc[ticker]
-                                f_net = 0
-                                i_net = 0
-                                for col in ['외국인', '외국인합계']:
-                                    if col in day_df.columns:
-                                        f_net = int(row[col])
-                                        break
-                                for col in ['기관합계', '기관']:
-                                    if col in day_df.columns:
-                                        i_net = int(row[col])
-                                        break
+                                f_net = int(row[f_col]) if f_col else 0
+                                i_net = int(row[i_col]) if i_col else 0
 
                             flow_accum[ticker]["foreigner"] += f_net
                             flow_accum[ticker]["institution"] += i_net

@@ -2,6 +2,7 @@ from pykrx import stock
 import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 import json
 import os
 
@@ -70,14 +71,20 @@ class ETFTracker:
             if df is None or df.empty:
                 return None
 
+            print(f"[ETF PDF] {ticker}/{date_str} 컬럼: {df.columns.tolist()}, 인덱스명: {df.index.name}")
             cols = {c.strip(): c for c in df.columns}
             comp = {}
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
+                # 인덱스가 종목코드인 경우 처리
+                idx_str = str(idx).strip()
                 code = None
-                for c in ['종목코드', 'Code', '코드', 'Ticker']:
-                    if c in cols:
-                        code = str(row[cols[c]]).strip().zfill(6)
-                        break
+                if idx_str.isdigit() and 1 <= len(idx_str) <= 6:
+                    code = idx_str.zfill(6)
+                else:
+                    for c in ['티커', '종목코드', 'Code', '코드', 'Ticker']:
+                        if c in cols:
+                            code = str(row[cols[c]]).strip().zfill(6)
+                            break
 
                 name = ""
                 for c in ['종목명', 'Name', '명칭']:
@@ -108,28 +115,47 @@ class ETFTracker:
 
     # ── 리밸런싱 감지 ─────────────────────────────────────────────────────────
     def detect_rebalancing(self) -> list:
-        today_str = self._last_trading_day(0)
+        today_str = self._last_trading_day(1)   # T-1: 확실히 데이터가 있는 날
         if self._rebal_date == today_str and self._rebal_cache is not None:
             return self._rebal_cache
 
-        prev_str = self._last_trading_day(7)   # 7 거래일 전
-        events = []
+        prev_str = self._last_trading_day(8)    # T-1 기준 약 7 거래일 전
 
+        # 모든 ETF 구성종목을 병렬로 조회 (타임아웃 25초)
+        def _fetch(args):
+            t, d = args
+            return t, d, self._get_composition(t, d)
+
+        tasks = (
+            [(etf["ticker"], today_str) for etf in MAJOR_ETFS] +
+            [(etf["ticker"], prev_str)  for etf in MAJOR_ETFS]
+        )
+        comp_map: dict = {}
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            future_map = {executor.submit(_fetch, task): task for task in tasks}
+            try:
+                for fut in as_completed(future_map, timeout=25):
+                    try:
+                        t, d, comp = fut.result(timeout=2)
+                        comp_map[(t, d)] = comp
+                    except Exception:
+                        pass
+            except FuturesTimeoutError:
+                print("[ETF] 구성종목 조회 시간 초과, 수집된 데이터로 처리합니다")
+
+        events = []
         for etf_info in MAJOR_ETFS:
             ticker = etf_info["ticker"]
-            name = etf_info["name"]
-
-            today_comp = self._get_composition(ticker, today_str)
-            prev_comp = self._get_composition(ticker, prev_str)
+            today_comp = comp_map.get((ticker, today_str))
+            prev_comp  = comp_map.get((ticker, prev_str))
 
             if not today_comp or not prev_comp:
                 continue
 
             today_set = set(today_comp.keys())
-            prev_set = set(prev_comp.keys())
-
-            added = today_set - prev_set
-            removed = prev_set - today_set
+            prev_set  = set(prev_comp.keys())
+            added   = today_set - prev_set
+            removed = prev_set  - today_set
 
             reweighted = []
             for code in today_set & prev_set:
@@ -150,7 +176,7 @@ class ETFTracker:
             if added or removed or len(reweighted) >= 3:
                 events.append({
                     "etf_ticker": ticker,
-                    "etf_name": name,
+                    "etf_name": etf_info["name"],
                     "category": etf_info["category"],
                     "date": today_str,
                     "prev_date": prev_str,
