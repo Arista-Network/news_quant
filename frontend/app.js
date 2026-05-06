@@ -1,5 +1,21 @@
 document.addEventListener('DOMContentLoaded', () => {
 
+    // ===== Dark Mode =====
+    const themeBtn = document.getElementById('theme-toggle');
+    const savedTheme = localStorage.getItem('theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const applyTheme = (t) => {
+        document.body.classList.toggle('dark', t === 'dark');
+        themeBtn.textContent = t === 'dark' ? '☀️' : '🌙';
+    };
+    applyTheme(savedTheme);
+    themeBtn.addEventListener('click', () => {
+        const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+        applyTheme(next);
+        localStorage.setItem('theme', next);
+        if (heatmapChart) heatmapChart.resize();
+    });
+
     // ===== Tab Navigation =====
     const tabBtns = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
@@ -341,18 +357,24 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadHeatmap(market) {
         const loadEl = document.getElementById('loading-heatmap');
         const tableSection = document.getElementById('flow-table-section');
+        const chartEl = document.getElementById('heatmap-chart');
         loadEl.classList.remove('hidden');
         tableSection.classList.add('hidden');
+        chartEl.innerHTML = '';
+        if (heatmapChart) { heatmapChart.dispose(); heatmapChart = null; }
 
         try {
             const res = await fetch(`/api/market-flow?market=${market}`);
             const json = await res.json();
             if (json.status === 'success') {
                 renderHeatmap(json.data);
-                renderFlowTable(json.data);
+                if (json.data && json.data.length > 0) renderFlowTable(json.data);
+            } else {
+                renderHeatmap([]);
             }
         } catch (e) {
             console.error(e);
+            renderHeatmap([]);
         } finally {
             loadEl.classList.add('hidden');
         }
@@ -360,25 +382,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderHeatmap(data) {
         const container = document.getElementById('heatmap-chart');
+
+        if (!data || data.length === 0) {
+            container.innerHTML = '<div class="heatmap-empty"><span style="font-size:2rem">📊</span><span>수급 데이터를 불러오지 못했습니다.</span><small style="font-size:0.8rem;margin-top:0.25rem">장 마감 후 또는 잠시 후 다시 시도해 주세요.</small></div>';
+            return;
+        }
+
         if (!heatmapChart) {
-            heatmapChart = echarts.init(container);
+            heatmapChart = echarts.init(container, document.body.classList.contains('dark') ? 'dark' : null);
         }
 
         const maxAbs = Math.max(...data.map(d => Math.abs(d.total)), 1);
 
-        const treeData = data.map(item => ({
-            name: item.name,
-            value: Math.max(Math.abs(item.total), 1),
-            itemStyle: {
-                color: item.total > 0
-                    ? `rgba(16,185,129,${Math.min(Math.abs(item.total) / maxAbs * 0.8 + 0.2, 1)})`
-                    : `rgba(239,68,68,${Math.min(Math.abs(item.total) / maxAbs * 0.8 + 0.2, 1)})`
-            },
-            label: {
-                formatter: `{b}\n${item.total > 0 ? '+' : ''}${fmtShares(item.total)}`
-            },
-            _raw: item
-        }));
+        const treeData = data.map(item => {
+            const ratio = Math.abs(item.total) / maxAbs;
+            const alpha = Math.min(ratio * 0.8 + 0.2, 1);
+            let color;
+            if (item.total > 0)      color = `rgba(16,185,129,${alpha})`;
+            else if (item.total < 0) color = `rgba(239,68,68,${alpha})`;
+            else                     color = 'rgba(148,163,184,0.3)';
+            return {
+                name: item.name,
+                value: Math.max(Math.abs(item.total), 1),
+                itemStyle: { color },
+                label: { formatter: `{b}\n${item.total > 0 ? '+' : ''}${fmtShares(item.total)}` },
+                _raw: item
+            };
+        });
 
         const option = {
             tooltip: {

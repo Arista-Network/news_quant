@@ -4,6 +4,7 @@ import pandas_ta as ta
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FTE
 
 
 class QuantEngine:
@@ -210,7 +211,6 @@ class QuantEngine:
             flow_accum = {}
             found_days = 0
 
-            # 최근 5 거래일 합산 (weekday 필터링으로 캘린더 14일 범위)
             for days_back in range(1, 20):
                 d = today - timedelta(days=days_back)
                 if d.weekday() >= 5:
@@ -218,15 +218,28 @@ class QuantEngine:
                 date_str = d.strftime("%Y%m%d")
 
                 try:
-                    day_df = stock.get_market_trading_volume_by_ticker(date_str, market)
+                    # 수량 기반 → 금액 기반 순서로 시도
+                    day_df = None
+                    for api_fn in [
+                        lambda ds: stock.get_market_trading_volume_by_ticker(ds, market),
+                        lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
+                    ]:
+                        try:
+                            tmp = api_fn(date_str)
+                            if tmp is not None and not tmp.empty:
+                                day_df = tmp
+                                break
+                        except Exception:
+                            pass
+
                     if day_df is None or day_df.empty:
+                        print(f"[수급맵] {date_str} 데이터 없음")
                         continue
 
                     is_multiindex = isinstance(day_df.columns, pd.MultiIndex)
                     if found_days == 0:
-                        print(f"[수급맵] 컬럼 구조: {list(day_df.columns[:8])}")
+                        print(f"[수급맵] {date_str} 컬럼: {list(day_df.columns[:8])}, multi={is_multiindex}")
 
-                    # 컬럼명 한 번만 탐색
                     if is_multiindex:
                         f_col = next((c for c in ['외국인합계', '외국인'] if (c, '순매수') in day_df.columns), None)
                         i_col = next((c for c in ['기관합계', '기관'] if (c, '순매수') in day_df.columns), None)
@@ -235,23 +248,21 @@ class QuantEngine:
                         i_col = next((c for c in ['기관합계', '기관'] if c in day_df.columns), None)
 
                     if found_days == 0:
-                        print(f"[수급맵] f_col={f_col}, i_col={i_col}, is_multi={is_multiindex}")
+                        print(f"[수급맵] f_col={f_col}, i_col={i_col}")
 
-                    for ticker in day_df.index:
-                        if ticker not in flow_accum:
-                            flow_accum[ticker] = {"foreigner": 0, "institution": 0}
-
+                    for tkr in day_df.index:
+                        if tkr not in flow_accum:
+                            flow_accum[tkr] = {"foreigner": 0, "institution": 0}
                         try:
                             if is_multiindex:
-                                f_net = int(day_df.loc[ticker, (f_col, '순매수')]) if f_col else 0
-                                i_net = int(day_df.loc[ticker, (i_col, '순매수')]) if i_col else 0
+                                f_net = int(day_df.loc[tkr, (f_col, '순매수')]) if f_col else 0
+                                i_net = int(day_df.loc[tkr, (i_col, '순매수')]) if i_col else 0
                             else:
-                                row = day_df.loc[ticker]
+                                row = day_df.loc[tkr]
                                 f_net = int(row[f_col]) if f_col else 0
                                 i_net = int(row[i_col]) if i_col else 0
-
-                            flow_accum[ticker]["foreigner"] += f_net
-                            flow_accum[ticker]["institution"] += i_net
+                            flow_accum[tkr]["foreigner"] += f_net
+                            flow_accum[tkr]["institution"] += i_net
                         except Exception:
                             pass
 
@@ -262,58 +273,60 @@ class QuantEngine:
                     print(f"[수급맵] {date_str} 오류: {e}")
                     continue
 
-            if not flow_accum:
-                return self._get_market_flow_fallback(market, top_n)
+            if flow_accum:
+                try:
+                    df_list = fdr.StockListing(market)
+                    name_map = dict(zip(df_list['Code'], df_list['Name']))
+                except Exception:
+                    name_map = {}
 
-            # 종목명 매핑
-            try:
-                df_list = fdr.StockListing(market)
-                name_map = dict(zip(df_list['Code'], df_list['Name']))
-            except Exception:
-                name_map = {}
+                results = []
+                for tkr, data in flow_accum.items():
+                    f_net = data["foreigner"]
+                    i_net = data["institution"]
+                    results.append({
+                        "name": name_map.get(tkr, tkr),
+                        "code": tkr,
+                        "foreigner": f_net,
+                        "institution": i_net,
+                        "total": f_net + i_net
+                    })
+                results.sort(key=lambda x: abs(x['total']), reverse=True)
+                print(f"[수급맵] 집계 완료: {len(results)}종목")
+                return results[:top_n]
 
-            results = []
-            for ticker, data in flow_accum.items():
-                f_net = data["foreigner"]
-                i_net = data["institution"]
-                results.append({
-                    "name": name_map.get(ticker, ticker),
-                    "code": ticker,
-                    "foreigner": f_net,
-                    "institution": i_net,
-                    "total": f_net + i_net
-                })
-
-            results.sort(key=lambda x: abs(x['total']), reverse=True)
-            return results[:top_n]
+            # 폴백: 개별 종목 병렬 조회
+            print("[수급맵] 일괄 조회 실패, 병렬 개별 조회로 폴백")
+            return self._get_market_flow_fallback(market, top_n)
 
         except Exception as e:
             print(f"[수급맵 오류] {e}")
             return self._get_market_flow_fallback(market, top_n)
 
     def _get_market_flow_fallback(self, market="KOSPI", top_n=20):
-        """수급맵 폴백: 종목별 개별 조회"""
+        """수급맵 폴백: 상위 50종목 병렬 개별 조회"""
         try:
-            end_date = datetime.now()
-            end_str = end_date.strftime("%Y%m%d")
-            start_str = (end_date - timedelta(days=14)).strftime("%Y%m%d")
+            today = datetime.now()
+            end_str   = today.strftime("%Y%m%d")
+            start_str = (today - timedelta(days=14)).strftime("%Y%m%d")
 
-            if market == "KOSPI":
-                df_list = fdr.StockListing('KOSPI')
-            else:
-                df_list = fdr.StockListing('KOSDAQ')
+            df_list = fdr.StockListing(market)
+            if df_list is None or df_list.empty:
+                return []
 
-            results = []
-            for _, row in df_list.head(30).iterrows():
-                ticker = row['Code']
+            rows = list(df_list.head(50).iterrows())
+
+            def fetch_one(idx_row):
+                _, row = idx_row
+                tkr  = row['Code']
                 name = row['Name']
                 try:
-                    inv_df = stock.get_market_trading_volume_by_date(start_str, end_str, ticker)
+                    inv_df = stock.get_market_trading_volume_by_date(start_str, end_str, tkr)
                     if inv_df is None or inv_df.empty:
-                        continue
+                        return None
                     f_net = 0
                     i_net = 0
-                    for col in ['외국인', '외국인합계']:
+                    for col in ['외국인합계', '외국인']:
                         if col in inv_df.columns:
                             f_net = int(inv_df[col].sum())
                             break
@@ -321,16 +334,29 @@ class QuantEngine:
                         if col in inv_df.columns:
                             i_net = int(inv_df[col].sum())
                             break
-                    results.append({
-                        "name": name, "code": ticker,
-                        "foreigner": f_net, "institution": i_net,
-                        "total": f_net + i_net
-                    })
+                    return {"name": name, "code": tkr,
+                            "foreigner": f_net, "institution": i_net,
+                            "total": f_net + i_net}
                 except Exception:
-                    continue
+                    return None
+
+            results = []
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futs = {executor.submit(fetch_one, r): r for r in rows}
+                try:
+                    for fut in as_completed(futs, timeout=22):
+                        try:
+                            res = fut.result(timeout=2)
+                            if res is not None:
+                                results.append(res)
+                        except Exception:
+                            pass
+                except FTE:
+                    print("[수급맵 폴백] 시간 초과, 수집된 데이터 사용")
 
             results.sort(key=lambda x: abs(x['total']), reverse=True)
+            print(f"[수급맵 폴백] {len(results)}종목 수집")
             return results[:top_n]
         except Exception as e:
-            print(f"[폴백 오류] {e}")
+            print(f"[수급맵 폴백 오류] {e}")
             return []
