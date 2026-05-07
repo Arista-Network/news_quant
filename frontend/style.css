@@ -311,31 +311,80 @@ body.dark .chip-removed{ background:rgba(239,68,68,0.2);  color:#fca5a5; }
     flex-direction:column; gap:0.5rem;
 }
 
-/* ===== Responsive ===== */
+/* ===== Mobile Bottom Navigation ===== */
+.mobile-nav { display:none; }
+
 @media (max-width:640px) {
-    .header-inner { padding:0.5rem 0.75rem; gap:0.4rem; }
+    /* ── 헤더 탭 숨기고 하단 내비로 대체 ── */
+    .tab-nav { display:none; }
+    .header-badge { display:none; }
+    .header-inner { padding:0.5rem 0.85rem; gap:0.6rem; }
     .logo-text { font-size:1.1rem; }
-    .tab-btn { font-size:0.72rem; padding:0.3rem 0.5rem; }
-    .feed-header h1 { font-size:1.3rem; }
-    .feed-container { padding:1.25rem 0.75rem 3rem; }
+
+    /* ── 하단 내비게이션 ── */
+    .mobile-nav {
+        display:flex;
+        position:fixed; bottom:0; left:0; right:0; z-index:200;
+        background:var(--card);
+        border-top:1px solid var(--border);
+        padding:0.4rem 0 env(safe-area-inset-bottom, 0.4rem);
+        backdrop-filter:blur(16px);
+        -webkit-backdrop-filter:blur(16px);
+    }
+    .mnav-btn {
+        flex:1; display:flex; flex-direction:column; align-items:center; gap:0.15rem;
+        padding:0.3rem 0.5rem; background:none; border:none; cursor:pointer;
+        color:var(--text-3); font-size:0.62rem; font-weight:600; min-height:48px;
+        transition:color .2s;
+    }
+    .mnav-btn.active { color:var(--accent); }
+    .mnav-btn svg { stroke:currentColor; }
+
+    /* ── 콘텐츠 하단 패딩 (내비 가림 방지) ── */
+    body { padding-bottom:72px; }
+
+    /* ── 피드 ── */
+    .feed-header h1 { font-size:1.25rem; }
+    .feed-container { padding:1.25rem 0.75rem 2rem; }
     .news-body { padding:1rem 1rem 0.75rem; }
+    .news-title { font-size:1rem; }
+    .news-summary { font-size:0.85rem; }
+
+    /* ── 퀀트 카드 ── */
     .quant-section { padding:0.75rem 1rem; }
     .qc-smart-money { grid-template-columns:1fr 1fr; }
     .qc-indicators .ind-label { width:48px; font-size:0.75rem; }
+    .qc-name { font-size:0.95rem; }
+    .qc-price { font-size:0.9rem; }
+
+    /* ── ETF 섹션 ── */
     .rebal-card-header { flex-direction:column; }
     .section-title-row { flex-direction:column; align-items:flex-start; gap:0.5rem; }
-    /* 테이블 모바일 스크롤 */
     .table-section, .etf-section { overflow-x:auto; }
     table { min-width:480px; }
     .rebal-mini-table { min-width:320px; }
-    /* 히트맵 높이 축소 */
-    #heatmap-chart { height:320px !important; }
-    /* 수급 맵 테이블 전체 스크롤 */
     #flow-table-section { overflow-x:auto; }
     #flow-table { min-width:380px; }
-    /* 뉴스 카드 */
-    .news-title { font-size:1rem; }
-    .news-summary { font-size:0.85rem; }
-    .qc-name { font-size:0.95rem; }
-    .qc-price { font-size:0.9rem; }
+
+    /* ── 히트맵: 모바일에서는 높이 auto (카드 리스트) ── */
+    #heatmap-chart { height:auto !important; min-height:0; }
+    .heatmap-wrapper { padding:0.5rem; }
 }
+
+/* ===== 수급맵 모바일 카드 리스트 ===== */
+.hm-list { display:flex; flex-direction:column; gap:0.4rem; padding:0.25rem; }
+.hm-row {
+    display:flex; align-items:center; gap:0.6rem;
+    padding:0.7rem 0.85rem; border-radius:10px;
+    border-left:3px solid transparent;
+}
+.hm-buy     { border-color:var(--green);  background:rgba(16,185,129,0.07); }
+.hm-sell    { border-color:var(--red);    background:rgba(239,68,68,0.07); }
+.hm-neutral { border-color:var(--border); background:var(--bg); }
+.hm-rank  { width:20px; font-size:0.68rem; font-weight:700; color:var(--text-3); flex-shrink:0; text-align:center; }
+.hm-info  { flex:1; min-width:0; }
+.hm-name  { display:block; font-weight:700; font-size:0.88rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hm-code  { font-size:0.68rem; color:var(--text-3); }
+.hm-nums  { text-align:right; flex-shrink:0; }
+.hm-total { display:block; font-weight:700; font-size:0.9rem; }
+.hm-sub   { font-size:0.67rem; color:var(--text-3); white-space:nowrap; }

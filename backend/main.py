@@ -1,8 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os
-import sys
+import os, sys, asyncio
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from news_parser import NewsParser
@@ -10,7 +9,6 @@ from quant_engine import QuantEngine
 from etf_tracker import ETFTracker
 
 app = FastAPI(title="NewsQuant API")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +21,38 @@ news_parser = NewsParser()
 quant_engine = QuantEngine()
 etf_tracker = ETFTracker()
 
+# ── 수급맵 백그라운드 캐시 ──────────────────────────────────────────────────
+_flow_cache: dict = {
+    "KOSPI":  {"data": [], "loading": False},
+    "KOSDAQ": {"data": [], "loading": False},
+}
+
+
+async def _refresh_flow(market: str):
+    entry = _flow_cache[market]
+    if entry["loading"]:
+        return
+    entry["loading"] = True
+    try:
+        loop = asyncio.get_event_loop()
+        data = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: quant_engine.get_market_flow(market)),
+            timeout=110.0
+        )
+        entry["data"] = data or []
+        print(f"[수급맵 캐시] {market} 업데이트: {len(entry['data'])}종목")
+    except asyncio.TimeoutError:
+        print(f"[수급맵 캐시] {market} 타임아웃")
+    except Exception as e:
+        print(f"[수급맵 캐시 오류] {market}: {e}")
+    finally:
+        entry["loading"] = False
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_refresh_flow("KOSPI"))
+
 
 @app.get("/healthz")
 async def healthz():
@@ -33,7 +63,6 @@ async def healthz():
 async def get_news_with_quant():
     """최신 뉴스 + 퀀트 인사이트 통합 API"""
     news_items = news_parser.fetch_latest_news(limit=15)
-
     for item in news_items:
         quant_data_list = []
         for stock_info in item["extracted_stocks"]:
@@ -42,15 +71,32 @@ async def get_news_with_quant():
                 q_data["name"] = stock_info["name"]
                 quant_data_list.append(q_data)
         item["quant_data"] = quant_data_list
-
     return {"status": "success", "data": news_items}
 
 
 @app.get("/api/market-flow")
 async def get_market_flow(market: str = Query("KOSPI")):
-    """시장 전체 외국인/기관 수급 히트맵 데이터"""
-    data = quant_engine.get_market_flow(market=market)
-    return {"status": "success", "data": data}
+    """시장 전체 외국인/기관 수급 히트맵 데이터 (백그라운드 캐시)"""
+    entry = _flow_cache.get(market)
+    if entry is None:
+        entry = {"data": [], "loading": False}
+        _flow_cache[market] = entry
+
+    if not entry["data"] and not entry["loading"]:
+        asyncio.create_task(_refresh_flow(market))
+
+    if entry["loading"] and not entry["data"]:
+        return {"status": "loading", "data": []}
+
+    return {"status": "success", "data": entry["data"]}
+
+
+@app.get("/api/market-flow/refresh")
+async def force_refresh_flow(market: str = Query("KOSPI")):
+    """수급맵 강제 갱신 트리거"""
+    _flow_cache[market]["data"] = []
+    asyncio.create_task(_refresh_flow(market))
+    return {"status": "refreshing", "market": market}
 
 
 @app.get("/api/etf-rebalancing")

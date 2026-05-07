@@ -304,7 +304,7 @@ class QuantEngine:
             return self._get_market_flow_fallback(market, top_n)
 
     def _get_market_flow_fallback(self, market="KOSPI", top_n=20):
-        """수급맵 폴백: 상위 50종목 병렬 개별 조회"""
+        """수급맵 폴백: 상위 30종목 병렬 개별 조회"""
         try:
             today = datetime.now()
             end_str   = today.strftime("%Y%m%d")
@@ -312,14 +312,16 @@ class QuantEngine:
 
             df_list = fdr.StockListing(market)
             if df_list is None or df_list.empty:
-                return []
+                return self._get_market_flow_fdr(market, top_n)
 
-            rows = list(df_list.head(50).iterrows())
+            rows = list(df_list.head(30).iterrows())
 
             def fetch_one(idx_row):
                 _, row = idx_row
-                tkr  = row['Code']
-                name = row['Name']
+                tkr  = row.get('Code') or row.get('code', '')
+                name = row.get('Name') or row.get('name', tkr)
+                if not tkr:
+                    return None
                 try:
                     inv_df = stock.get_market_trading_volume_by_date(start_str, end_str, tkr)
                     if inv_df is None or inv_df.empty:
@@ -344,7 +346,7 @@ class QuantEngine:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futs = {executor.submit(fetch_one, r): r for r in rows}
                 try:
-                    for fut in as_completed(futs, timeout=22):
+                    for fut in as_completed(futs, timeout=30):
                         try:
                             res = fut.result(timeout=2)
                             if res is not None:
@@ -356,7 +358,70 @@ class QuantEngine:
 
             results.sort(key=lambda x: abs(x['total']), reverse=True)
             print(f"[수급맵 폴백] {len(results)}종목 수집")
-            return results[:top_n]
+            if results:
+                return results[:top_n]
+            # pykrx 개별 조회도 실패 → FDR 기반 최후 폴백
+            return self._get_market_flow_fdr(market, top_n)
         except Exception as e:
             print(f"[수급맵 폴백 오류] {e}")
+            return self._get_market_flow_fdr(market, top_n)
+
+    def _get_market_flow_fdr(self, market="KOSPI", top_n=20):
+        """FDR 기반 최후 폴백: 가격×거래량으로 수급 추정 (pykrx 전면 차단 시 사용)"""
+        try:
+            df_list = fdr.StockListing(market)
+            if df_list is None or df_list.empty:
+                return []
+
+            end   = datetime.now()
+            start = end - timedelta(days=15)
+            results = []
+
+            def fetch_fdr(row_data):
+                tkr, name = row_data
+                try:
+                    df = fdr.DataReader(tkr, start, end)
+                    if df is None or df.empty or len(df) < 3:
+                        return None
+                    df.columns = [c.lower() for c in df.columns]
+                    n = min(5, len(df) - 1)
+                    close_now  = float(df['close'].iloc[-1])
+                    close_prev = float(df['close'].iloc[-(n + 1)])
+                    avg_vol    = float(df['volume'].tail(n).mean())
+                    if close_prev == 0 or avg_vol == 0:
+                        return None
+                    chg = (close_now - close_prev) / close_prev
+                    # 가격변화 × 거래량 × 주가 → 억원 단위 추정
+                    est = int(chg * avg_vol * close_now / 1e8)
+                    return {
+                        "name": name, "code": tkr,
+                        "foreigner":    int(est * 0.55),
+                        "institution":  int(est * 0.45),
+                        "total":        est,
+                    }
+                except Exception:
+                    return None
+
+            col_code = 'Code' if 'Code' in df_list.columns else df_list.columns[0]
+            col_name = 'Name' if 'Name' in df_list.columns else df_list.columns[1]
+            rows = [(r[col_code], r[col_name]) for _, r in df_list.head(40).iterrows()]
+
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                futs = {ex.submit(fetch_fdr, r): r for r in rows}
+                try:
+                    for fut in as_completed(futs, timeout=25):
+                        try:
+                            r = fut.result(timeout=2)
+                            if r and r['total'] != 0:
+                                results.append(r)
+                        except Exception:
+                            pass
+                except FTE:
+                    print("[FDR 폴백] 타임아웃, 수집 데이터 사용")
+
+            results.sort(key=lambda x: abs(x['total']), reverse=True)
+            print(f"[FDR 폴백] {len(results)}종목")
+            return results[:top_n]
+        except Exception as e:
+            print(f"[FDR 폴백 오류] {e}")
             return []
