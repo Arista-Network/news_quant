@@ -92,6 +92,34 @@ class NewsParser:
         """중복 비교용 정규화 제목"""
         return re.sub(r'[\s\[\]()「」]', '', title).lower()
 
+    # 주식 무관 기사 배제를 위한 비관련 키워드
+    _IRRELEVANT_KEYWORDS = [
+        "날씨", "스포츠", "야구", "축구", "연예", "드라마", "영화", "오락",
+        "맛집", "여행", "관광", "복지", "교육", "입시", "수능", "건강", "의료",
+        "부동산", "아파트", "분양", "청약",  # 부동산은 별도 판단
+        "선거", "정치", "국방", "외교", "문화재",
+    ]
+
+    def _is_stock_relevant(self, item: dict) -> bool:
+        """주식 투자와 직접 관련된 기사인지 판단"""
+        # 종목이 감지됐거나 ETF 관련이면 무조건 포함
+        if item['extracted_stocks'] or item['is_etf_rebal']:
+            return True
+        # 주요 시장 카테고리
+        if item['category'] in ('실적', 'M&A', '수급', 'ETF'):
+            return True
+        # 거시경제·규제도 감성이 뚜렷하면 포함
+        if item['category'] in ('거시경제', '규제') and item['sentiment']['label'] != 'NEUTRAL':
+            return True
+        # 제목/요약에 비관련 키워드가 있으면 제외
+        combined = item.get('_combined', '')
+        if any(kw in combined for kw in self._IRRELEVANT_KEYWORDS):
+            return False
+        # 감성이 있으면 일단 포함 (긍정/부정 시장 뉴스)
+        if item['sentiment']['label'] != 'NEUTRAL':
+            return True
+        return False
+
     def fetch_latest_news(self, limit=20) -> list:
         all_items = []
         seen_titles = set()
@@ -99,7 +127,7 @@ class NewsParser:
         for source in self.rss_sources:
             try:
                 feed = feedparser.parse(source["url"])
-                for entry in feed.entries[:8]:
+                for entry in feed.entries[:10]:
                     title_text = entry.title.strip() if hasattr(entry, 'title') else ""
                     if not title_text:
                         continue
@@ -138,7 +166,7 @@ class NewsParser:
                     elif hasattr(entry, 'updated'):
                         published = entry.updated
 
-                    all_items.append({
+                    item = {
                         "title": title_text,
                         "link": entry.link if hasattr(entry, 'link') else "",
                         "source": source["name"],
@@ -148,10 +176,27 @@ class NewsParser:
                         "sentiment": sentiment,
                         "category": category,
                         "is_etf_rebal": is_etf_news,
-                    })
+                        "_combined": combined_text,  # 관련성 판단용 (응답에서 제거)
+                    }
+                    all_items.append(item)
             except Exception as e:
                 print(f"[RSS 오류] {source['name']}: {e}")
 
-        # 정렬: ETF 리밸런싱 뉴스 → 종목 감지 → 일반
-        all_items.sort(key=lambda x: (x['is_etf_rebal'], len(x['extracted_stocks'])), reverse=True)
-        return all_items[:limit]
+        # 1차: 주식 관련 기사 필터
+        relevant = [i for i in all_items if self._is_stock_relevant(i)]
+        # 관련 기사가 너무 적으면 전체를 사용
+        if len(relevant) < max(limit // 2, 5):
+            relevant = all_items
+
+        # 2차: ETF·종목 감지 뉴스 우선 정렬
+        relevant.sort(
+            key=lambda x: (x['is_etf_rebal'], len(x['extracted_stocks']),
+                           0 if x['sentiment']['label'] == 'NEUTRAL' else 1),
+            reverse=True
+        )
+
+        result = relevant[:limit]
+        # 내부용 필드 제거
+        for item in result:
+            item.pop('_combined', None)
+        return result

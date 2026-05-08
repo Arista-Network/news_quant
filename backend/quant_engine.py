@@ -24,47 +24,55 @@ class QuantEngine:
         return default
 
     def _get_investor_data(self, ticker, end_str, days=20):
-        """외국인/기관 순매수 데이터 조회 (robust)"""
-        foreigner_net = 0
-        institution_net = 0
+        """외국인/기관 순매수 금액(원) 조회 — 금액 기반 API 우선, 수량 기반 폴백"""
         inv_start = (datetime.strptime(end_str, "%Y%m%d") - timedelta(days=days)).strftime("%Y%m%d")
 
-        try:
-            inv_df = stock.get_market_trading_volume_by_date(inv_start, end_str, ticker)
-            if inv_df is not None and not inv_df.empty:
+        api_list = [
+            ("금액", lambda: stock.get_market_trading_value_by_date(inv_start, end_str, ticker)),
+            ("수량", lambda: stock.get_market_trading_volume_by_date(inv_start, end_str, ticker)),
+        ]
+
+        for label, api_fn in api_list:
+            try:
+                inv_df = api_fn()
+                if inv_df is None or inv_df.empty:
+                    continue
+
                 cols = inv_df.columns.tolist()
-                print(f"[투자자] {ticker} 컬럼: {cols}")
+                print(f"[투자자/{label}] {ticker} 컬럼: {cols[:6]}")
 
-                # 외국인 컬럼 탐색
-                for col in ['외국인', '외국인합계']:
-                    if col in inv_df.columns:
-                        foreigner_net = int(inv_df[col].sum())
-                        break
+                f_net = 0
+                i_net = 0
 
-                # 기관 컬럼 탐색
-                for col in ['기관합계', '기관']:
-                    if col in inv_df.columns:
-                        institution_net = int(inv_df[col].sum())
-                        break
+                # MultiIndex 처리
+                if isinstance(inv_df.columns, pd.MultiIndex):
+                    f_col = next((c for c in ['외국인합계', '외국인']
+                                  if (c, '순매수') in inv_df.columns), None)
+                    i_col = next((c for c in ['기관합계', '기관']
+                                  if (c, '순매수') in inv_df.columns), None)
+                    if f_col:
+                        f_net = int(inv_df[(f_col, '순매수')].sum())
+                    if i_col:
+                        i_net = int(inv_df[(i_col, '순매수')].sum())
+                else:
+                    for col in ['외국인합계', '외국인']:
+                        if col in inv_df.columns:
+                            f_net = int(inv_df[col].sum())
+                            break
+                    for col in ['기관합계', '기관']:
+                        if col in inv_df.columns:
+                            i_net = int(inv_df[col].sum())
+                            break
 
-                if foreigner_net == 0 and institution_net == 0:
-                    # 값 기반(금액) API 시도
-                    inv_val = stock.get_market_trading_value_by_date(inv_start, end_str, ticker)
-                    if inv_val is not None and not inv_val.empty:
-                        for col in ['외국인', '외국인합계']:
-                            if col in inv_val.columns:
-                                foreigner_net = int(inv_val[col].sum())
-                                break
-                        for col in ['기관합계', '기관']:
-                            if col in inv_val.columns:
-                                institution_net = int(inv_val[col].sum())
-                                break
-            else:
-                print(f"[투자자] {ticker}: 데이터 없음")
-        except Exception as e:
-            print(f"[투자자 오류] {ticker}: {e}")
+                if f_net != 0 or i_net != 0:
+                    print(f"[투자자/{label}] {ticker}: 외={f_net:+,} 기={i_net:+,}")
+                    return f_net, i_net
 
-        return foreigner_net, institution_net
+            except Exception as e:
+                print(f"[투자자/{label}] {ticker} 오류: {e}")
+
+        print(f"[투자자] {ticker}: 데이터 없음 (0 반환)")
+        return 0, 0
 
     def analyze_stock(self, ticker):
         """종합 퀀트 분석 (기술적 지표 + 수급 + 시그널)"""
@@ -204,14 +212,40 @@ class QuantEngine:
             print(f"[분석 오류] {ticker}: {e}")
             return None
 
-    def get_market_flow(self, market="KOSPI", top_n=20):
+    def _trading_days_for_period(self, period_days):
+        """기간(일) → 수집할 거래일 수 매핑"""
+        if period_days <= 1:
+            return 1
+        elif period_days <= 7:
+            return 5
+        elif period_days <= 30:
+            return 20
+        else:
+            return 60  # 1년 필터도 최대 60거래일(약 3개월)로 제한
+
+    def _parse_flow_df(self, day_df):
+        """DataFrame에서 외국인·기관 순매수 컬럼 탐색"""
+        is_multi = isinstance(day_df.columns, pd.MultiIndex)
+        if is_multi:
+            f_col = next((c for c in ['외국인합계', '외국인'] if (c, '순매수') in day_df.columns), None)
+            i_col = next((c for c in ['기관합계', '기관'] if (c, '순매수') in day_df.columns), None)
+        else:
+            f_col = next((c for c in ['외국인합계', '외국인'] if c in day_df.columns), None)
+            i_col = next((c for c in ['기관합계', '기관'] if c in day_df.columns), None)
+        return is_multi, f_col, i_col
+
+    def get_market_flow(self, market="KOSPI", top_n=20, period_days=7):
         """시장 전체 외국인/기관 수급 히트맵 데이터 (일별 집계)"""
+        max_trading_days = self._trading_days_for_period(period_days)
         try:
             today = datetime.now()
             flow_accum = {}
             found_days = 0
+            scan_limit = max(max_trading_days * 2 + 30, 60)
 
-            for days_back in range(1, 20):
+            for days_back in range(1, scan_limit):
+                if found_days >= max_trading_days:
+                    break
                 d = today - timedelta(days=days_back)
                 if d.weekday() >= 5:
                     continue
@@ -236,18 +270,9 @@ class QuantEngine:
                         print(f"[수급맵] {date_str} 데이터 없음")
                         continue
 
-                    is_multiindex = isinstance(day_df.columns, pd.MultiIndex)
+                    is_multiindex, f_col, i_col = self._parse_flow_df(day_df)
                     if found_days == 0:
                         print(f"[수급맵] {date_str} 컬럼: {list(day_df.columns[:8])}, multi={is_multiindex}")
-
-                    if is_multiindex:
-                        f_col = next((c for c in ['외국인합계', '외국인'] if (c, '순매수') in day_df.columns), None)
-                        i_col = next((c for c in ['기관합계', '기관'] if (c, '순매수') in day_df.columns), None)
-                    else:
-                        f_col = next((c for c in ['외국인합계', '외국인'] if c in day_df.columns), None)
-                        i_col = next((c for c in ['기관합계', '기관'] if c in day_df.columns), None)
-
-                    if found_days == 0:
                         print(f"[수급맵] f_col={f_col}, i_col={i_col}")
 
                     for tkr in day_df.index:
@@ -267,8 +292,6 @@ class QuantEngine:
                             pass
 
                     found_days += 1
-                    if found_days >= 5:
-                        break
                 except Exception as e:
                     print(f"[수급맵] {date_str} 오류: {e}")
                     continue
@@ -365,6 +388,191 @@ class QuantEngine:
         except Exception as e:
             print(f"[수급맵 폴백 오류] {e}")
             return self._get_market_flow_fdr(market, top_n)
+
+    def get_market_daily_flow(self, market="KOSPI", period_days=7):
+        """일별 시장 전체 외국인/기관 순매수 합계 반환 (추이 차트용)
+        period_days=365 의 경우 60거래일을 주간 집계로 반환한다.
+        """
+        max_td = self._trading_days_for_period(period_days)
+        today = datetime.now()
+
+        # 수집 대상 거래일 목록
+        target_dates = []
+        for days_back in range(1, max_td * 3 + 30):
+            d = today - timedelta(days=days_back)
+            if d.weekday() < 5:
+                target_dates.append((d, d.strftime("%Y%m%d")))
+            if len(target_dates) >= max_td:
+                break
+
+        def fetch_day(date_info):
+            dt_obj, date_str = date_info
+            try:
+                day_df = None
+                for api_fn in [
+                    lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
+                    lambda ds: stock.get_market_trading_volume_by_ticker(ds, market),
+                ]:
+                    try:
+                        tmp = api_fn(date_str)
+                        if tmp is not None and not tmp.empty:
+                            day_df = tmp
+                            break
+                    except Exception:
+                        pass
+
+                if day_df is None or day_df.empty:
+                    return None
+
+                is_multi, f_col, i_col = self._parse_flow_df(day_df)
+                if is_multi:
+                    f_total = int(day_df[(f_col, '순매수')].sum()) if f_col else 0
+                    i_total = int(day_df[(i_col, '순매수')].sum()) if i_col else 0
+                else:
+                    f_total = int(day_df[f_col].sum()) if f_col else 0
+                    i_total = int(day_df[i_col].sum()) if i_col else 0
+
+                return {"date": date_str, "foreigner": f_total, "institution": i_total,
+                        "total": f_total + i_total}
+            except Exception as e:
+                print(f"[일별수급] {date_str} 오류: {e}")
+                return None
+
+        results = []
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futs = {executor.submit(fetch_day, d): d for d in target_dates}
+            try:
+                for fut in as_completed(futs, timeout=100):
+                    try:
+                        r = fut.result(timeout=5)
+                        if r is not None:
+                            results.append(r)
+                    except Exception:
+                        pass
+            except FTE:
+                print("[일별수급] 타임아웃, 수집 데이터 사용")
+
+        results.sort(key=lambda x: x['date'])
+
+        # 1년 기간은 주간 집계로 변환 (가독성)
+        if period_days >= 365 and len(results) > 10:
+            return self._resample_weekly(results)
+        return results
+
+    def _resample_weekly(self, daily_data):
+        """일별 데이터를 주간 합계로 집계"""
+        weekly = {}
+        for item in daily_data:
+            d = datetime.strptime(item['date'], "%Y%m%d")
+            week_start = (d - timedelta(days=d.weekday())).strftime("%Y%m%d")
+            if week_start not in weekly:
+                weekly[week_start] = {"date": week_start, "foreigner": 0, "institution": 0, "total": 0}
+            weekly[week_start]["foreigner"] += item["foreigner"]
+            weekly[week_start]["institution"] += item["institution"]
+            weekly[week_start]["total"] += item["total"]
+        return sorted(weekly.values(), key=lambda x: x['date'])
+
+    def get_top_stocks(self, market="KOSPI", top_n=80):
+        """시가총액 상위 N종목 (ticker, name) 반환"""
+        try:
+            df = fdr.StockListing(market)
+            if df is None or df.empty:
+                return []
+            if 'Marcap' in df.columns:
+                df = df.nlargest(top_n, 'Marcap')
+            else:
+                df = df.head(top_n)
+            col_code = 'Code' if 'Code' in df.columns else df.columns[0]
+            col_name = 'Name' if 'Name' in df.columns else df.columns[1]
+            return [(row[col_code], row[col_name]) for _, row in df.iterrows()]
+        except Exception as e:
+            print(f"[종목목록 오류] {e}")
+            return []
+
+    def _matches_conditions(self, data, conditions):
+        """스크리너 조건 AND 매칭"""
+        if not conditions:
+            return True
+        checks = []
+        if conditions.get('rsi_low'):     checks.append(data['rsi'] < 40)
+        if conditions.get('rsi_high'):    checks.append(data['rsi'] > 60)
+        if conditions.get('macd_golden'): checks.append(data['macd'] > data['macd_signal'])
+        if conditions.get('macd_dead'):   checks.append(data['macd'] < data['macd_signal'])
+        if conditions.get('ma_up'):
+            checks.append(data['ma5'] > data['ma20'] > 0 and data['ma20'] > data['ma60'] > 0)
+        if conditions.get('ma_down'):
+            checks.append(0 < data['ma5'] < data['ma20'] < data['ma60'])
+        if conditions.get('foreigner_buy'):   checks.append(data['foreigner_net'] > 0)
+        if conditions.get('institution_buy'): checks.append(data['institution_net'] > 0)
+        if conditions.get('smart_money'):
+            checks.append(data['foreigner_net'] > 0 and data['institution_net'] > 0)
+        if conditions.get('signal_buy'):  checks.append(data['signal'] in ['BUY', 'STRONG_BUY'])
+        if conditions.get('signal_sell'): checks.append(data['signal'] in ['SELL', 'STRONG_SELL'])
+        if conditions.get('bb_lower'):
+            checks.append(data['current_price'] > 0 and data['bb_lower'] > 0 and
+                          data['current_price'] <= data['bb_lower'] * 1.03)
+        return all(checks) if checks else True
+
+    def run_screener(self, market="KOSPI", conditions=None, top_n=80):
+        """퀀트 스크리너: 조건 기반 종목 필터링"""
+        if conditions is None:
+            conditions = {}
+        stocks = self.get_top_stocks(market, top_n)
+        if not stocks:
+            return []
+        results = []
+
+        def analyze_one(tkr_name):
+            ticker, name = tkr_name
+            try:
+                data = self.analyze_stock(ticker)
+                if data is None:
+                    return None
+                data = dict(data)
+                data['name'] = name
+                return data
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futs = {executor.submit(analyze_one, s): s for s in stocks}
+            try:
+                for fut in as_completed(futs, timeout=180):
+                    try:
+                        r = fut.result(timeout=5)
+                        if r is not None:
+                            results.append(r)
+                    except Exception:
+                        pass
+            except FTE:
+                print("[스크리너] 타임아웃, 수집된 데이터 사용")
+
+        filtered = [r for r in results if self._matches_conditions(r, conditions)]
+        filtered.sort(key=lambda x: x['score'], reverse=True)
+        print(f"[스크리너] {market}: {len(filtered)}/{len(results)}종목 매칭")
+        return filtered[:50]
+
+    def get_stock_detail(self, ticker):
+        """종목 상세: 60일 가격 히스토리 + 퀀트 분석"""
+        try:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=100)
+            df = fdr.DataReader(ticker, start_date, end_date)
+            if df is None or df.empty:
+                return None
+            df.columns = [c.lower() for c in df.columns]
+            quant = self.analyze_stock(ticker)
+            price_history = []
+            for date, row in df.tail(60).iterrows():
+                price_history.append({
+                    'date': date.strftime('%Y%m%d'),
+                    'close': int(row['close']),
+                    'volume': int(row.get('volume', 0)),
+                })
+            return {'ticker': ticker, 'price_history': price_history, 'quant': quant}
+        except Exception as e:
+            print(f"[종목상세 오류] {ticker}: {e}")
+            return None
 
     def _get_market_flow_fdr(self, market="KOSPI", top_n=20):
         """FDR 기반 최후 폴백: 가격×거래량으로 수급 추정 (pykrx 전면 차단 시 사용)"""

@@ -20,6 +20,7 @@
             </div>
             <nav class="tab-nav" id="tab-nav">
                 <button class="tab-btn active" data-tab="feed">뉴스 & 인사이트</button>
+                <button class="tab-btn" data-tab="screener">퀀트 스크리너</button>
                 <button class="tab-btn" data-tab="etf">ETF 리밸런싱</button>
                 <button class="tab-btn" data-tab="heatmap">스마트 머니 맵</button>
             </nav>
@@ -35,11 +36,109 @@
                 <h1>오늘의 시장 뉴스</h1>
                 <p>기사를 읽으며 종목의 수급과 지표를 한눈에 파악하세요. 종목이 감지되면 퀀트 카드가 자동으로 붙습니다.</p>
             </div>
+
+            <!-- 수급 레이더 위젯 -->
+            <div id="smart-radar" class="smart-radar hidden">
+                <div class="radar-header">
+                    <span class="radar-title">수급 레이더</span>
+                    <span class="radar-sub">오늘 외국인·기관 순매수 TOP</span>
+                </div>
+                <div id="radar-cols" class="radar-cols"></div>
+            </div>
+
+            <!-- 관심 종목 -->
+            <div id="watchlist-section" class="watchlist-section hidden">
+                <div class="watchlist-header">
+                    <span class="watchlist-title">⭐ 관심 종목</span>
+                    <button class="watchlist-clear" id="watchlist-clear">전체 삭제</button>
+                </div>
+                <div id="watchlist-items" class="watchlist-items"></div>
+            </div>
+
             <div id="loading-feed" class="loading-state">
                 <div class="spinner"></div>
                 <p>뉴스와 퀀트 데이터를 분석 중...</p>
             </div>
             <div id="news-feed" class="news-feed hidden"></div>
+        </div>
+    </main>
+
+    <!-- Tab 2: Quant Screener -->
+    <main id="tab-screener" class="tab-content">
+        <div class="feed-container">
+            <div class="feed-header">
+                <h1>퀀트 스크리너</h1>
+                <p>조건을 선택하면 한국 시장 시가총액 상위 종목을 자동으로 분석해 드립니다.</p>
+            </div>
+
+            <div class="screener-box">
+                <div class="screener-presets">
+                    <span class="preset-label">빠른 선택:</span>
+                    <button class="preset-btn" data-preset="buy">매수 관점 스캔</button>
+                    <button class="preset-btn" data-preset="smart">스마트머니 추적</button>
+                    <button class="preset-btn" data-preset="oversold">과매도 반등 탐색</button>
+                    <button class="preset-btn" data-preset="clear">초기화</button>
+                </div>
+                <div class="screener-groups">
+                    <div class="screener-group">
+                        <div class="screener-group-title">기술적 지표</div>
+                        <div class="condition-chips">
+                            <label class="cond-chip"><input type="checkbox" value="rsi_low"> RSI 과매도 <em>&lt;40</em></label>
+                            <label class="cond-chip"><input type="checkbox" value="rsi_high"> RSI 과매수 <em>&gt;60</em></label>
+                            <label class="cond-chip"><input type="checkbox" value="macd_golden"> MACD 골든크로스</label>
+                            <label class="cond-chip"><input type="checkbox" value="macd_dead"> MACD 데드크로스</label>
+                            <label class="cond-chip"><input type="checkbox" value="ma_up"> 이평 정배열</label>
+                            <label class="cond-chip"><input type="checkbox" value="ma_down"> 이평 역배열</label>
+                            <label class="cond-chip"><input type="checkbox" value="bb_lower"> 볼린저 하단 근접</label>
+                        </div>
+                    </div>
+                    <div class="screener-group">
+                        <div class="screener-group-title">수급 & 시그널</div>
+                        <div class="condition-chips">
+                            <label class="cond-chip"><input type="checkbox" value="foreigner_buy"> 외국인 순매수</label>
+                            <label class="cond-chip"><input type="checkbox" value="institution_buy"> 기관 순매수</label>
+                            <label class="cond-chip"><input type="checkbox" value="smart_money"> 스마트머니 동시매수</label>
+                            <label class="cond-chip"><input type="checkbox" value="signal_buy"> 매수 시그널</label>
+                            <label class="cond-chip"><input type="checkbox" value="signal_sell"> 매도 시그널</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="screener-actions">
+                    <div class="market-toggle">
+                        <button class="market-btn active" data-smarket="KOSPI">코스피</button>
+                        <button class="market-btn" data-smarket="KOSDAQ">코스닥</button>
+                    </div>
+                    <button class="screener-run-btn" id="screener-run">스크리닝 실행</button>
+                </div>
+            </div>
+
+            <div id="loading-screener" class="loading-state hidden">
+                <div class="spinner"></div>
+                <p id="screener-loading-msg">시장 전체 종목 분석 중... (1~2분 소요)</p>
+            </div>
+            <div id="screener-result" class="table-section hidden">
+                <div class="screener-result-header">
+                    <h3 id="screener-result-title">스크리닝 결과</h3>
+                    <span id="screener-result-count" class="screener-count"></span>
+                </div>
+                <div style="overflow-x:auto">
+                    <table id="screener-table">
+                        <thead>
+                            <tr>
+                                <th>종목</th><th>현재가</th><th>등락률</th>
+                                <th>RSI</th><th>MACD</th><th>MA배열</th>
+                                <th>외국인</th><th>기관</th><th>시그널</th><th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody id="screener-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="screener-empty" class="empty-state hidden">
+                <span class="empty-icon">🔍</span>
+                <p>조건에 맞는 종목이 없습니다.</p>
+                <small>조건을 완화하거나 다른 시장을 선택해보세요.</small>
+            </div>
         </div>
     </main>
 
@@ -103,10 +202,32 @@
                 <h1>스마트 머니 수급 맵</h1>
                 <p>외국인과 기관의 자금이 어디로 흘러가는지 한눈에 확인하세요. 블록이 클수록 순매수 금액이 큽니다.</p>
             </div>
-            <div class="market-toggle">
-                <button class="market-btn active" data-market="KOSPI">코스피</button>
-                <button class="market-btn" data-market="KOSDAQ">코스닥</button>
+            <div class="controls-row">
+                <div class="market-toggle">
+                    <button class="market-btn active" data-market="KOSPI">코스피</button>
+                    <button class="market-btn" data-market="KOSDAQ">코스닥</button>
+                </div>
+                <div class="period-toggle">
+                    <button class="period-btn" data-period="1">1일</button>
+                    <button class="period-btn active" data-period="7">7일</button>
+                    <button class="period-btn" data-period="30">30일</button>
+                    <button class="period-btn" data-period="365">1년</button>
+                </div>
             </div>
+
+            <!-- 수급 추이 차트 -->
+            <div class="trend-chart-wrapper">
+                <div class="trend-chart-header">
+                    <span class="trend-chart-title">외국인 · 기관 순매수 추이</span>
+                    <span class="trend-chart-sub" id="trend-period-label">최근 7일</span>
+                </div>
+                <div id="loading-trend" class="loading-state hidden">
+                    <div class="spinner"></div>
+                    <p>추이 데이터 수집 중...</p>
+                </div>
+                <div id="trend-chart" style="width:100%;height:300px;"></div>
+            </div>
+
             <div id="loading-heatmap" class="loading-state hidden">
                 <div class="spinner"></div>
                 <p>수급 데이터를 수집 중...</p>
@@ -115,7 +236,7 @@
                 <div id="heatmap-chart" style="width:100%;height:500px;"></div>
             </div>
             <div id="flow-table-section" class="table-section hidden">
-                <h3>상세 수급 데이터 <small style="font-weight:400;color:var(--text-3)">(최근 5 거래일 합산)</small></h3>
+                <h3>상세 수급 데이터 <small id="flow-table-period-label" style="font-weight:400;color:var(--text-3)">(최근 7일 합산)</small></h3>
                 <table id="flow-table">
                     <thead>
                         <tr><th>종목</th><th>외국인 순매수</th><th>기관 순매수</th><th>합계</th></tr>
@@ -162,27 +283,72 @@
                 <span class="qc-score-badge"></span>
             </div>
             <div class="qc-indicators">
-                <div class="ind-item"><span class="ind-label">RSI</span><div class="ind-bar-wrap"><div class="ind-bar rsi-bar"></div></div><span class="ind-val"></span></div>
-                <div class="ind-item"><span class="ind-label">MACD</span><span class="ind-val macd-val"></span></div>
-                <div class="ind-item"><span class="ind-label">스토캐스틱</span><div class="ind-bar-wrap"><div class="ind-bar stoch-bar"></div></div><span class="ind-val stoch-val"></span></div>
+                <div class="ind-item">
+                    <span class="ind-label">RSI
+                        <span class="help-icon" data-tip="RSI (상대강도지수)&#10;14일간 상승 강도를 0~100으로 표시&#10;70↑ 과매수 (하락 가능성)&#10;30↓ 과매도 (반등 가능성)">?</span>
+                    </span>
+                    <div class="ind-bar-wrap"><div class="ind-bar rsi-bar"></div></div>
+                    <span class="ind-val"></span>
+                </div>
+                <div class="ind-item">
+                    <span class="ind-label">MACD
+                        <span class="help-icon" data-tip="MACD (이동평균수렴확산)&#10;단기(12일)·장기(26일) 이평 차이&#10;양수: 단기 상승 모멘텀&#10;시그널선 상향돌파 → 매수 신호">?</span>
+                    </span>
+                    <span class="ind-val macd-val"></span>
+                </div>
+                <div class="ind-item">
+                    <span class="ind-label">스토캐스틱
+                        <span class="help-icon" data-tip="스토캐스틱 (Stochastic)&#10;최근 가격이 N일 범위 내 위치&#10;80↑ 과매수 구간&#10;20↓ 과매도 구간">?</span>
+                    </span>
+                    <div class="ind-bar-wrap"><div class="ind-bar stoch-bar"></div></div>
+                    <span class="ind-val stoch-val"></span>
+                </div>
             </div>
             <div class="qc-smart-money">
                 <div class="sm-col">
-                    <span class="sm-lbl">외국인 (20일)</span>
+                    <span class="sm-lbl">외국인 순매수
+                        <span class="help-icon" data-tip="최근 20거래일간&#10;외국인 투자자 순매수 금액&#10;(+) 매수 우위 · (−) 매도 우위">?</span>
+                    </span>
                     <span class="sm-val foreigner-val"></span>
                 </div>
                 <div class="sm-col">
-                    <span class="sm-lbl">기관 (20일)</span>
+                    <span class="sm-lbl">기관 순매수
+                        <span class="help-icon" data-tip="최근 20거래일간&#10;기관 투자자 순매수 금액&#10;(+) 매수 우위 · (−) 매도 우위">?</span>
+                    </span>
                     <span class="sm-val institution-val"></span>
                 </div>
                 <div class="sm-col">
-                    <span class="sm-lbl">MA 배열</span>
+                    <span class="sm-lbl">MA 배열
+                        <span class="help-icon" data-tip="이동평균선 배열 상태&#10;정배열: 5일>20일>60일 (상승 추세)&#10;역배열: 5일<20일<60일 (하락 추세)">?</span>
+                    </span>
                     <span class="sm-val ma-status"></span>
                 </div>
             </div>
             <ul class="qc-reasons"></ul>
         </div>
     </template>
+
+    <!-- Stock Detail Panel -->
+    <div id="stock-panel" class="stock-panel">
+        <div class="panel-overlay" id="panel-overlay"></div>
+        <div class="panel-inner">
+            <div class="panel-header">
+                <div class="panel-title-wrap">
+                    <span id="panel-name" class="panel-name"></span>
+                    <span id="panel-ticker" class="panel-ticker-badge"></span>
+                </div>
+                <button class="panel-close" id="panel-close">✕</button>
+            </div>
+            <div id="panel-loading" class="loading-state">
+                <div class="spinner"></div>
+                <p>데이터 불러오는 중...</p>
+            </div>
+            <div id="panel-content" class="panel-content hidden">
+                <div id="mini-chart" style="width:100%;height:180px;"></div>
+                <div id="panel-quant-wrap" class="panel-quant-wrap"></div>
+            </div>
+        </div>
+    </div>
 
     <!-- Mobile Bottom Navigation -->
     <nav class="mobile-nav" id="mobile-nav">
@@ -191,6 +357,13 @@
                 <path d="M4 6h16M4 10h16M4 14h10M4 18h8"/>
             </svg>
             <span>뉴스</span>
+        </button>
+        <button class="mnav-btn" data-tab="screener">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span>스크리너</span>
         </button>
         <button class="mnav-btn" data-tab="etf">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

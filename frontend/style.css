@@ -106,6 +106,7 @@ body {
     background:var(--card); border:1px solid var(--border);
     border-radius:14px; padding:1.25rem;
     box-shadow:0 1px 4px rgba(0,0,0,0.04);
+    overflow:visible;
 }
 .qc-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.75rem; }
 .qc-name { font-weight:800; font-size:1.05rem; }
@@ -129,7 +130,7 @@ body {
 /* Indicator Bars */
 .qc-indicators { display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1rem; }
 .ind-item { display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; }
-.ind-label { width:55px; color:var(--text-3); font-weight:600; flex-shrink:0; }
+.ind-label { width:auto; min-width:55px; color:var(--text-3); font-weight:600; flex-shrink:0; display:flex; align-items:center; gap:0; }
 .ind-bar-wrap { flex:1; height:6px; background:#f1f5f9; border-radius:3px; overflow:hidden; }
 .ind-bar { height:100%; border-radius:3px; transition:width .5s ease; }
 .rsi-bar { background: linear-gradient(90deg,var(--green),var(--orange),var(--red)); }
@@ -154,13 +155,50 @@ body {
 .qc-reasons li::before { content:"→ "; color:var(--accent); font-weight:700; }
 
 /* ===== HEATMAP TAB ===== */
-.market-toggle { display:flex; gap:0.5rem; margin-bottom:1.5rem; }
+.controls-row {
+    display:flex; flex-wrap:wrap; gap:0.75rem 1.5rem;
+    align-items:center; margin-bottom:1.25rem;
+}
+.market-toggle { display:flex; gap:0.5rem; }
 .market-btn {
     padding:0.5rem 1.25rem; border-radius:10px; border:1px solid var(--border);
     background:var(--card); font-weight:600; cursor:pointer; font-size:0.9rem;
     transition:all .2s;
 }
 .market-btn.active { background:var(--text-1); color:#fff; border-color:var(--text-1); }
+
+/* 기간 필터 토글 */
+.period-toggle {
+    display:flex; gap:0.35rem;
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:10px; padding:0.25rem;
+}
+.period-btn {
+    padding:0.3rem 0.8rem; border-radius:7px; border:none;
+    background:transparent; font-weight:600; cursor:pointer;
+    font-size:0.82rem; color:var(--text-3); transition:all .2s;
+}
+.period-btn.active {
+    background:var(--card); color:var(--text-1);
+    box-shadow:0 1px 4px rgba(0,0,0,0.1);
+}
+.period-btn:hover:not(.active) { color:var(--text-2); }
+
+/* 추이 차트 */
+.trend-chart-wrapper {
+    background:var(--card); border-radius:var(--radius);
+    border:1px solid var(--border); padding:1.25rem 1.25rem 0.75rem;
+    margin-bottom:1.25rem;
+}
+.trend-chart-header {
+    display:flex; align-items:baseline; gap:0.6rem; margin-bottom:0.75rem;
+}
+.trend-chart-title {
+    font-size:0.95rem; font-weight:700;
+}
+.trend-chart-sub {
+    font-size:0.78rem; color:var(--text-3); font-weight:500;
+}
 .heatmap-wrapper {
     background:var(--card); border-radius:var(--radius);
     border:1px solid var(--border); padding:1rem; margin-bottom:1.5rem;
@@ -269,6 +307,43 @@ td.neg { color:var(--red); font-weight:600; }
 /* Smart money neutral state */
 .sm-val.neutral { color:var(--text-3); }
 
+/* ===== 지표 설명 툴팁 ===== */
+.help-icon {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:13px; height:13px; border-radius:50%;
+    background:var(--text-3); color:#fff;
+    font-size:8px; font-weight:800; cursor:help;
+    position:relative; vertical-align:middle; margin-left:3px;
+    flex-shrink:0;
+}
+.help-icon::after {
+    content: attr(data-tip);
+    position:absolute; bottom:calc(100% + 7px); left:50%;
+    transform:translateX(-50%);
+    background:var(--text-1); color:var(--card);
+    padding:0.45rem 0.65rem; border-radius:9px;
+    font-size:0.72rem; font-weight:400; line-height:1.55;
+    white-space:pre-line; width:190px; text-align:left;
+    opacity:0; pointer-events:none;
+    transition:opacity .18s; z-index:60;
+    box-shadow:0 4px 16px rgba(0,0,0,0.18);
+}
+.help-icon::before {
+    content:'';
+    position:absolute; bottom:calc(100% + 2px); left:50%;
+    transform:translateX(-50%);
+    border:5px solid transparent; border-top-color:var(--text-1);
+    opacity:0; pointer-events:none; transition:opacity .18s; z-index:61;
+}
+.help-icon:hover::after,
+.help-icon:hover::before { opacity:1; }
+
+/* 모바일: 탭으로도 툴팁 열 수 있도록 */
+@media (hover:none) {
+    .help-icon:focus::after,
+    .help-icon:focus::before { opacity:1; }
+}
+
 /* ===== DARK MODE ===== */
 body.dark {
     --bg: #0f172a;
@@ -288,12 +363,26 @@ body.dark .rebal-card { background:#1a2744; }
 body.dark .heatmap-wrapper { background:#1e293b; }
 body.dark .market-btn { background:#1e293b; color:var(--text-2); }
 body.dark .market-btn.active { background:var(--text-1); color:#0f172a; }
+body.dark .period-toggle { background:#0f172a; }
+body.dark .period-btn.active { background:var(--card); color:var(--text-1); box-shadow:0 1px 4px rgba(0,0,0,0.3); }
+body.dark .trend-chart-wrapper { background:var(--card); }
 body.dark td { border-bottom-color:#1e293b; }
 body.dark .ind-bar-wrap { background:#334155; }
 body.dark .etf-section { background:var(--card); }
 body.dark .rebal-mini-table td { border-bottom-color:#1e293b; }
 body.dark .chip-added  { background:rgba(16,185,129,0.2); color:#6ee7b7; }
 body.dark .chip-removed{ background:rgba(239,68,68,0.2);  color:#fca5a5; }
+body.dark .smart-radar { background:var(--card); }
+body.dark .radar-chip  { background:#0f172a; }
+body.dark .radar-chip:hover { background:rgba(37,99,235,0.25); }
+body.dark .watchlist-section { background:var(--card); }
+body.dark .wl-chip { background:#0f172a; }
+body.dark .screener-box { background:var(--card); }
+body.dark .cond-chip { background:#0f172a; }
+body.dark .cond-chip:has(input:checked) { background:rgba(37,99,235,0.3); color:#93c5fd; border-color:var(--accent); }
+body.dark .preset-btn { background:#0f172a; }
+body.dark .panel-inner { background:var(--card); }
+body.dark .pq-row { border-bottom-color:#1e293b; }
 
 /* ===== DARK TOGGLE ===== */
 .theme-btn {
@@ -369,7 +458,184 @@ body.dark .chip-removed{ background:rgba(239,68,68,0.2);  color:#fca5a5; }
     /* ── 히트맵: 모바일에서는 높이 auto (카드 리스트) ── */
     #heatmap-chart { height:auto !important; min-height:0; }
     .heatmap-wrapper { padding:0.5rem; }
+
+    /* ── 기간 필터 / 추이 차트 ── */
+    .controls-row { gap:0.5rem; }
+    .period-btn { padding:0.25rem 0.6rem; font-size:0.78rem; }
+    #trend-chart { height:220px !important; }
+    .trend-chart-wrapper { padding:1rem 0.75rem 0.5rem; }
+
+    /* ── 레이더 / 위시리스트 ── */
+    .radar-cols { grid-template-columns:1fr; gap:0.5rem; }
+    .smart-radar { padding:0.85rem 1rem; }
+    .watchlist-section { padding:0.75rem 1rem; }
+
+    /* ── 스크리너 ── */
+    .screener-groups { grid-template-columns:1fr; }
+    .screener-box { padding:1rem; }
+    .screener-run-btn { width:100%; }
+
+    /* ── 종목 상세 패널 ── */
+    .panel-inner { width:100vw; border-left:none; border-top:1px solid var(--border); top:auto; height:85vh; transform:translateY(100%); border-radius:var(--radius) var(--radius) 0 0; }
+    .stock-panel.open .panel-inner { transform:translateY(0); }
 }
+
+/* ===== SMART MONEY RADAR ===== */
+.smart-radar {
+    background:var(--card); border-radius:var(--radius);
+    border:1px solid var(--border); padding:1rem 1.25rem;
+    margin-bottom:1.25rem;
+}
+.radar-header { display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.85rem; }
+.radar-title  { font-size:0.95rem; font-weight:800; }
+.radar-sub    { font-size:0.75rem; color:var(--text-3); }
+.radar-cols   { display:grid; grid-template-columns:repeat(3,1fr); gap:0.75rem; }
+.radar-group  { display:flex; flex-direction:column; gap:0.4rem; }
+.radar-group-title { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.2rem; }
+.radar-blue   { color:var(--accent); }
+.radar-orange { color:var(--orange); }
+.radar-green  { color:var(--green); }
+.radar-chip {
+    display:flex; justify-content:space-between; align-items:center;
+    background:var(--bg); border-radius:8px; padding:0.4rem 0.6rem;
+    cursor:pointer; transition:background .15s;
+}
+.radar-chip:hover { background:var(--accent-light); }
+.radar-chip-name { font-size:0.8rem; font-weight:600; color:var(--text-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60%; }
+.radar-chip-val  { font-size:0.75rem; font-weight:700; }
+
+/* ===== WATCHLIST ===== */
+.watchlist-section {
+    background:var(--card); border-radius:var(--radius);
+    border:1px solid var(--border); padding:0.9rem 1.25rem;
+    margin-bottom:1.25rem;
+}
+.watchlist-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.7rem; }
+.watchlist-title  { font-size:0.9rem; font-weight:800; }
+.watchlist-clear  { background:none; border:1px solid var(--border); border-radius:7px; padding:0.2rem 0.6rem; font-size:0.72rem; color:var(--text-3); cursor:pointer; }
+.watchlist-clear:hover { color:var(--red); border-color:var(--red); }
+.watchlist-items  { display:flex; flex-wrap:wrap; gap:0.4rem; }
+.wl-chip {
+    display:flex; align-items:center; gap:0.35rem;
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:20px; padding:0.3rem 0.75rem;
+    cursor:pointer; transition:all .15s; font-size:0.82rem;
+}
+.wl-chip:hover { background:var(--accent-light); border-color:var(--accent); }
+.wl-name { font-weight:700; }
+.wl-code { color:var(--text-3); font-size:0.72rem; }
+.wl-remove { background:none; border:none; color:var(--text-3); cursor:pointer; font-size:0.9rem; padding:0 0.1rem; line-height:1; }
+.wl-remove:hover { color:var(--red); }
+
+/* ===== STAR BUTTON on quant card ===== */
+.star-btn {
+    background:none; border:none; cursor:pointer;
+    font-size:0.95rem; padding:0 0.15rem; line-height:1;
+    color:var(--text-3); transition:transform .15s;
+    margin-left:4px;
+}
+.star-btn:hover   { transform:scale(1.2); color:var(--orange); }
+.star-btn.starred { color:var(--orange); }
+.qc-name-wrap     { display:flex; align-items:center; flex-wrap:wrap; }
+
+/* ===== SCREENER TAB ===== */
+.screener-box {
+    background:var(--card); border-radius:var(--radius);
+    border:1px solid var(--border); padding:1.5rem;
+    margin-bottom:1.5rem;
+}
+.screener-presets {
+    display:flex; align-items:center; flex-wrap:wrap; gap:0.4rem;
+    margin-bottom:1.25rem; padding-bottom:1rem;
+    border-bottom:1px solid var(--border);
+}
+.preset-label { font-size:0.75rem; color:var(--text-3); font-weight:600; }
+.preset-btn {
+    padding:0.3rem 0.8rem; border-radius:20px;
+    border:1px solid var(--border); background:var(--bg);
+    font-size:0.78rem; font-weight:600; cursor:pointer; color:var(--text-2);
+    transition:all .15s;
+}
+.preset-btn:hover { background:var(--accent-light); border-color:var(--accent); color:var(--accent); }
+
+.screener-groups { display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; margin-bottom:1.25rem; }
+.screener-group  { display:flex; flex-direction:column; gap:0.6rem; }
+.screener-group-title { font-size:0.78rem; font-weight:700; color:var(--text-3); text-transform:uppercase; letter-spacing:0.04em; }
+.condition-chips { display:flex; flex-wrap:wrap; gap:0.4rem; }
+.cond-chip {
+    display:flex; align-items:center; gap:0.35rem;
+    padding:0.35rem 0.75rem; border-radius:20px;
+    border:1px solid var(--border); background:var(--bg);
+    font-size:0.8rem; font-weight:600; cursor:pointer;
+    transition:all .15s; user-select:none;
+}
+.cond-chip:has(input:checked) { background:var(--accent-light); border-color:var(--accent); color:var(--accent); }
+.cond-chip input { display:none; }
+.cond-chip em { font-style:normal; opacity:0.65; font-size:0.72rem; }
+
+.screener-actions {
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;
+    padding-top:1rem; border-top:1px solid var(--border);
+}
+.screener-run-btn {
+    padding:0.65rem 2rem; border-radius:12px; border:none;
+    background:var(--accent); color:#fff; font-size:0.95rem;
+    font-weight:700; cursor:pointer; transition:all .2s;
+}
+.screener-run-btn:hover { background:#1d4ed8; transform:translateY(-1px); }
+.screener-result-header { display:flex; align-items:center; gap:0.75rem; margin-bottom:1rem; }
+.screener-count { font-size:0.82rem; color:var(--text-3); font-weight:600; }
+.screener-name  { cursor:pointer; }
+.screener-name:hover { color:var(--accent); text-decoration:underline; }
+
+/* ===== STOCK DETAIL PANEL ===== */
+.stock-panel {
+    position:fixed; inset:0; z-index:500;
+    pointer-events:none;
+}
+.stock-panel.open { pointer-events:all; }
+.panel-overlay {
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0); transition:background .25s;
+}
+.stock-panel.open .panel-overlay { background:rgba(0,0,0,0.45); }
+.panel-inner {
+    position:absolute; top:0; right:0; bottom:0;
+    width:min(420px,100vw);
+    background:var(--card); border-left:1px solid var(--border);
+    display:flex; flex-direction:column;
+    transform:translateX(100%); transition:transform .3s cubic-bezier(.4,0,.2,1);
+    overflow-y:auto;
+}
+.stock-panel.open .panel-inner { transform:translateX(0); }
+.panel-header {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:1.25rem 1.5rem; border-bottom:1px solid var(--border);
+    position:sticky; top:0; background:var(--card); z-index:1;
+}
+.panel-title-wrap { display:flex; align-items:center; gap:0.5rem; }
+.panel-name       { font-size:1.1rem; font-weight:800; }
+.panel-ticker-badge { font-size:0.75rem; color:var(--text-3); background:var(--bg); padding:0.15rem 0.5rem; border-radius:6px; }
+.panel-close      { background:none; border:1px solid var(--border); border-radius:8px; padding:0.25rem 0.6rem; cursor:pointer; font-size:0.9rem; color:var(--text-2); }
+.panel-close:hover { background:var(--red-bg); color:var(--red); border-color:var(--red); }
+.panel-content    { padding:1rem 1.5rem 2rem; }
+.panel-quant-wrap { margin-top:1rem; }
+.panel-quant-grid { display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1rem; }
+.pq-row   { display:flex; justify-content:space-between; align-items:center; padding:0.4rem 0; border-bottom:1px solid #f1f5f9; }
+.pq-label { font-size:0.8rem; color:var(--text-3); font-weight:600; }
+.pq-val   { font-size:0.88rem; font-weight:700; }
+.pq-val.pos { color:var(--green); }
+.pq-val.neg { color:var(--red); }
+.pq-val.neutral { color:var(--text-3); }
+.panel-reasons { margin:0.5rem 0 1rem; }
+.panel-watchlist-row { margin-top:1rem; }
+.panel-watch-btn {
+    width:100%; padding:0.6rem; border-radius:10px;
+    border:1px solid var(--border); background:var(--bg);
+    font-size:0.88rem; font-weight:600; cursor:pointer; transition:all .2s;
+}
+.panel-watch-btn:hover { background:var(--accent-light); border-color:var(--accent); color:var(--accent); }
+.panel-watch-btn.starred { background:var(--orange-bg); border-color:var(--orange); color:var(--orange); }
 
 /* ===== 수급맵 모바일 카드 리스트 ===== */
 .hm-list { display:flex; flex-direction:column; gap:0.4rem; padding:0.25rem; }
