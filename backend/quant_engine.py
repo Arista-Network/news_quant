@@ -11,6 +11,7 @@ class QuantEngine:
     def __init__(self):
         self._cache = {}
         self._cache_date = None
+        self._market_flow_snapshot: dict = {}  # {ticker: {foreigner, institution}} — bulk cache for screener
 
     def _check_cache(self):
         today = datetime.now().strftime("%Y%m%d")
@@ -314,6 +315,10 @@ class QuantEngine:
                         "institution": i_net,
                         "total": f_net + i_net
                     })
+                self._market_flow_snapshot = {
+                    r['code']: {'foreigner': r['foreigner'], 'institution': r['institution']}
+                    for r in results
+                }
                 results.sort(key=lambda x: abs(x['total']), reverse=True)
                 print(f"[수급맵] 집계 완료: {len(results)}종목")
                 return results[:top_n]
@@ -382,6 +387,10 @@ class QuantEngine:
             results.sort(key=lambda x: abs(x['total']), reverse=True)
             print(f"[수급맵 폴백] {len(results)}종목 수집")
             if results:
+                self._market_flow_snapshot = {
+                    r['code']: {'foreigner': r['foreigner'], 'institution': r['institution']}
+                    for r in results
+                }
                 return results[:top_n]
             # pykrx 개별 조회도 실패 → FDR 기반 최후 폴백
             return self._get_market_flow_fdr(market, top_n)
@@ -410,8 +419,8 @@ class QuantEngine:
             try:
                 day_df = None
                 for api_fn in [
-                    lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
                     lambda ds: stock.get_market_trading_volume_by_ticker(ds, market),
+                    lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
                 ]:
                     try:
                         tmp = api_fn(date_str)
@@ -453,6 +462,12 @@ class QuantEngine:
                 print("[일별수급] 타임아웃, 수집 데이터 사용")
 
         results.sort(key=lambda x: x['date'])
+
+        if not results:
+            print("[일별수급] bulk 실패, per-stock 폴백")
+            target_date_strs = {ds for _, ds in target_dates}
+            results = self._get_daily_flow_per_stock(market, target_date_strs)
+            results.sort(key=lambda x: x['date'])
 
         # 1년 기간은 주간 집계로 변환 (가독성)
         if period_days >= 365 and len(results) > 10:
@@ -547,6 +562,16 @@ class QuantEngine:
             except FTE:
                 print("[스크리너] 타임아웃, 수집된 데이터 사용")
 
+        # bulk 수급 스냅샷으로 per-stock 0값 보완 (pykrx 개별 조회 실패 시 대비)
+        if self._market_flow_snapshot:
+            for r in results:
+                snap = self._market_flow_snapshot.get(r.get('ticker', ''))
+                if snap:
+                    if r.get('foreigner_net', 0) == 0:
+                        r['foreigner_net'] = snap['foreigner']
+                    if r.get('institution_net', 0) == 0:
+                        r['institution_net'] = snap['institution']
+
         filtered = [r for r in results if self._matches_conditions(r, conditions)]
         filtered.sort(key=lambda x: x['score'], reverse=True)
         print(f"[스크리너] {market}: {len(filtered)}/{len(results)}종목 매칭")
@@ -573,6 +598,63 @@ class QuantEngine:
         except Exception as e:
             print(f"[종목상세 오류] {ticker}: {e}")
             return None
+
+    def _get_daily_flow_per_stock(self, market: str, target_date_strs: set) -> list:
+        """일별 수급 폴백: 상위 30종목 date-range 조회 → 일별 합산"""
+        try:
+            df_list = fdr.StockListing(market)
+            if df_list is None or df_list.empty:
+                return []
+            col_code = 'Code' if 'Code' in df_list.columns else df_list.columns[0]
+            tickers = list(df_list.head(30)[col_code])
+            min_date = min(target_date_strs)
+            max_date = datetime.now().strftime("%Y%m%d")
+            daily_accum: dict = {}
+
+            def fetch_ticker(tkr):
+                try:
+                    df = stock.get_market_trading_volume_by_date(min_date, max_date, tkr)
+                    if df is None or df.empty:
+                        return {}
+                    result = {}
+                    for idx, row in df.iterrows():
+                        ds = idx.strftime("%Y%m%d") if hasattr(idx, 'strftime') else str(idx)[:8]
+                        if ds not in target_date_strs:
+                            continue
+                        f_net, i_net = 0, 0
+                        for col in ['외국인합계', '외국인']:
+                            if col in row.index:
+                                f_net = int(row[col]); break
+                        for col in ['기관합계', '기관']:
+                            if col in row.index:
+                                i_net = int(row[col]); break
+                        result[ds] = {'foreigner': f_net, 'institution': i_net}
+                    return result
+                except Exception:
+                    return {}
+
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                futs = {ex.submit(fetch_ticker, t): t for t in tickers}
+                try:
+                    for fut in as_completed(futs, timeout=60):
+                        try:
+                            day_data = fut.result(timeout=5)
+                            for ds, vals in day_data.items():
+                                if ds not in daily_accum:
+                                    daily_accum[ds] = {'foreigner': 0, 'institution': 0}
+                                daily_accum[ds]['foreigner'] += vals['foreigner']
+                                daily_accum[ds]['institution'] += vals['institution']
+                        except Exception:
+                            pass
+                except FTE:
+                    print("[일별수급 폴백] 타임아웃")
+
+            return [{'date': d, 'foreigner': v['foreigner'], 'institution': v['institution'],
+                     'total': v['foreigner'] + v['institution']}
+                    for d, v in daily_accum.items()]
+        except Exception as e:
+            print(f"[일별수급 폴백 오류] {e}")
+            return []
 
     def _get_market_flow_fdr(self, market="KOSPI", top_n=20):
         """FDR 기반 최후 폴백: 가격×거래량으로 수급 추정 (pykrx 전면 차단 시 사용)"""
