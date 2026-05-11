@@ -84,6 +84,8 @@ async def _refresh_trend(market: str, period: int = 7):
 async def startup_event():
     asyncio.create_task(_refresh_flow("KOSPI", 7))
     asyncio.create_task(_refresh_trend("KOSPI", 7))
+    asyncio.create_task(_refresh_flow("KOSPI", 1))
+    asyncio.create_task(_refresh_trend("KOSPI", 1))
 
 
 @app.get("/healthz")

@@ -332,7 +332,7 @@ class QuantEngine:
             return self._get_market_flow_fallback(market, top_n)
 
     def _get_market_flow_fallback(self, market="KOSPI", top_n=20):
-        """수급맵 폴백: 상위 30종목 병렬 개별 조회"""
+        """수급맵 폴백: 상위 80종목 병렬 개별 조회 (스냅샷 커버리지 확보)"""
         try:
             today = datetime.now()
             end_str   = today.strftime("%Y%m%d")
@@ -342,7 +342,8 @@ class QuantEngine:
             if df_list is None or df_list.empty:
                 return self._get_market_flow_fdr(market, top_n)
 
-            rows = list(df_list.head(30).iterrows())
+            # 스냅샷 커버리지를 위해 80종목 조회 (screener top_n과 맞춤)
+            rows = list(df_list.head(80).iterrows())
 
             def fetch_one(idx_row):
                 _, row = idx_row
@@ -356,14 +357,24 @@ class QuantEngine:
                         return None
                     f_net = 0
                     i_net = 0
-                    for col in ['외국인합계', '외국인']:
-                        if col in inv_df.columns:
-                            f_net = int(inv_df[col].sum())
-                            break
-                    for col in ['기관합계', '기관']:
-                        if col in inv_df.columns:
-                            i_net = int(inv_df[col].sum())
-                            break
+                    if isinstance(inv_df.columns, pd.MultiIndex):
+                        for investor in ['외국인합계', '외국인']:
+                            if (investor, '순매수') in inv_df.columns:
+                                f_net = int(inv_df[(investor, '순매수')].sum())
+                                break
+                        for investor in ['기관합계', '기관']:
+                            if (investor, '순매수') in inv_df.columns:
+                                i_net = int(inv_df[(investor, '순매수')].sum())
+                                break
+                    else:
+                        for col in ['외국인합계', '외국인']:
+                            if col in inv_df.columns:
+                                f_net = int(inv_df[col].sum())
+                                break
+                        for col in ['기관합계', '기관']:
+                            if col in inv_df.columns:
+                                i_net = int(inv_df[col].sum())
+                                break
                     return {"name": name, "code": tkr,
                             "foreigner": f_net, "institution": i_net,
                             "total": f_net + i_net}
@@ -374,9 +385,9 @@ class QuantEngine:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futs = {executor.submit(fetch_one, r): r for r in rows}
                 try:
-                    for fut in as_completed(futs, timeout=30):
+                    for fut in as_completed(futs, timeout=60):
                         try:
-                            res = fut.result(timeout=2)
+                            res = fut.result(timeout=5)
                             if res is not None:
                                 results.append(res)
                         except Exception:
@@ -414,16 +425,17 @@ class QuantEngine:
             if len(target_dates) >= max_td:
                 break
 
-        def fetch_day(date_info):
-            dt_obj, date_str = date_info
+        # 순차 조회 — pykrx 병렬 호출 시 스레드 안전성 문제로 직렬 처리
+        results = []
+        for dt_obj, date_str in target_dates:
             try:
                 day_df = None
                 for api_fn in [
-                    lambda ds: stock.get_market_trading_volume_by_ticker(ds, market),
-                    lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
+                    lambda ds=date_str: stock.get_market_trading_volume_by_ticker(ds, market),
+                    lambda ds=date_str: stock.get_market_trading_value_by_ticker(ds, market),
                 ]:
                     try:
-                        tmp = api_fn(date_str)
+                        tmp = api_fn()
                         if tmp is not None and not tmp.empty:
                             day_df = tmp
                             break
@@ -431,7 +443,8 @@ class QuantEngine:
                         pass
 
                 if day_df is None or day_df.empty:
-                    return None
+                    print(f"[일별수급] {date_str} 데이터 없음")
+                    continue
 
                 is_multi, f_col, i_col = self._parse_flow_df(day_df)
                 if is_multi:
@@ -441,25 +454,12 @@ class QuantEngine:
                     f_total = int(day_df[f_col].sum()) if f_col else 0
                     i_total = int(day_df[i_col].sum()) if i_col else 0
 
-                return {"date": date_str, "foreigner": f_total, "institution": i_total,
-                        "total": f_total + i_total}
+                results.append({"date": date_str, "foreigner": f_total, "institution": i_total,
+                                "total": f_total + i_total})
+                print(f"[일별수급] {date_str}: 외={f_total:+,} 기={i_total:+,}")
             except Exception as e:
                 print(f"[일별수급] {date_str} 오류: {e}")
-                return None
-
-        results = []
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            futs = {executor.submit(fetch_day, d): d for d in target_dates}
-            try:
-                for fut in as_completed(futs, timeout=100):
-                    try:
-                        r = fut.result(timeout=5)
-                        if r is not None:
-                            results.append(r)
-                    except Exception:
-                        pass
-            except FTE:
-                print("[일별수급] 타임아웃, 수집 데이터 사용")
+                continue
 
         results.sort(key=lambda x: x['date'])
 
@@ -532,6 +532,13 @@ class QuantEngine:
         """퀀트 스크리너: 조건 기반 종목 필터링"""
         if conditions is None:
             conditions = {}
+
+        # investor 조건 선택 시 스냅샷이 없으면 먼저 수급 데이터 수집
+        investor_conds = {'foreigner_buy', 'institution_buy', 'smart_money'}
+        if any(conditions.get(c) for c in investor_conds) and not self._market_flow_snapshot:
+            print("[스크리너] 스냅샷 없음 → 수급 데이터 직접 조회 시작")
+            self._get_market_flow_fallback(market, top_n=top_n)
+
         stocks = self.get_top_stocks(market, top_n)
         if not stocks:
             return []
@@ -549,7 +556,7 @@ class QuantEngine:
             except Exception:
                 return None
 
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             futs = {executor.submit(analyze_one, s): s for s in stocks}
             try:
                 for fut in as_completed(futs, timeout=180):
@@ -562,15 +569,18 @@ class QuantEngine:
             except FTE:
                 print("[스크리너] 타임아웃, 수집된 데이터 사용")
 
-        # bulk 수급 스냅샷으로 per-stock 0값 보완 (pykrx 개별 조회 실패 시 대비)
+        # bulk 수급 스냅샷 적용: 스냅샷 값이 0이 아닌 경우 항상 우선 적용
         if self._market_flow_snapshot:
             for r in results:
                 snap = self._market_flow_snapshot.get(r.get('ticker', ''))
                 if snap:
-                    if r.get('foreigner_net', 0) == 0:
-                        r['foreigner_net'] = snap['foreigner']
-                    if r.get('institution_net', 0) == 0:
-                        r['institution_net'] = snap['institution']
+                    snap_f = snap.get('foreigner', 0)
+                    snap_i = snap.get('institution', 0)
+                    # 스냅샷에 유효한 값이 있거나 per-stock이 0이면 스냅샷 사용
+                    if snap_f != 0 or r.get('foreigner_net', 0) == 0:
+                        r['foreigner_net'] = snap_f
+                    if snap_i != 0 or r.get('institution_net', 0) == 0:
+                        r['institution_net'] = snap_i
 
         filtered = [r for r in results if self._matches_conditions(r, conditions)]
         filtered.sort(key=lambda x: x['score'], reverse=True)
@@ -617,17 +627,26 @@ class QuantEngine:
                     if df is None or df.empty:
                         return {}
                     result = {}
+                    is_multi = isinstance(df.columns, pd.MultiIndex)
                     for idx, row in df.iterrows():
                         ds = idx.strftime("%Y%m%d") if hasattr(idx, 'strftime') else str(idx)[:8]
                         if ds not in target_date_strs:
                             continue
                         f_net, i_net = 0, 0
-                        for col in ['외국인합계', '외국인']:
-                            if col in row.index:
-                                f_net = int(row[col]); break
-                        for col in ['기관합계', '기관']:
-                            if col in row.index:
-                                i_net = int(row[col]); break
+                        if is_multi:
+                            for investor in ['외국인합계', '외국인']:
+                                if (investor, '순매수') in df.columns:
+                                    f_net = int(row[(investor, '순매수')]); break
+                            for investor in ['기관합계', '기관']:
+                                if (investor, '순매수') in df.columns:
+                                    i_net = int(row[(investor, '순매수')]); break
+                        else:
+                            for col in ['외국인합계', '외국인']:
+                                if col in row.index:
+                                    f_net = int(row[col]); break
+                            for col in ['기관합계', '기관']:
+                                if col in row.index:
+                                    i_net = int(row[col]); break
                         result[ds] = {'foreigner': f_net, 'institution': i_net}
                     return result
                 except Exception:
