@@ -92,13 +92,16 @@ class QuantEngine:
 
             df.columns = [c.lower() for c in df.columns]
 
-            df.ta.rsi(length=14, append=True)
-            df.ta.sma(length=5, append=True)
-            df.ta.sma(length=20, append=True)
-            df.ta.sma(length=60, append=True)
-            df.ta.macd(fast=12, slow=26, signal=9, append=True)
-            df.ta.bbands(length=20, std=2, append=True)
-            df.ta.stoch(append=True)
+            try:
+                df.ta.rsi(length=14, append=True)
+                df.ta.sma(length=5, append=True)
+                df.ta.sma(length=20, append=True)
+                df.ta.sma(length=60, append=True)
+                df.ta.macd(fast=12, slow=26, signal=9, append=True)
+                df.ta.bbands(length=20, std=2, append=True)
+                df.ta.stoch(append=True)
+            except Exception as ta_err:
+                print(f"[TA 오류] {ticker}: {ta_err}")
 
             last = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else last
@@ -117,6 +120,8 @@ class QuantEngine:
             bb_upper = safe('BBU_20_2.0')
             bb_lower = safe('BBL_20_2.0')
             stoch_k = safe('STOCHk_14_3_3', 50)
+            if not (0.0 <= stoch_k <= 100.0):
+                stoch_k = 50.0
             current_price = safe('close')
             change_rate = safe('change', 0)
 
@@ -124,8 +129,13 @@ class QuantEngine:
             prev_macd = self._safe_val(prev, 'MACD_12_26_9')
             prev_sig = self._safe_val(prev, 'MACDs_12_26_9')
 
-            # 외국인/기관 수급
-            foreigner_net, institution_net = self._get_investor_data(ticker, end_str)
+            # 외국인/기관 수급 — 스냅샷 우선 사용 (thread-safe, 빠름)
+            if ticker in self._market_flow_snapshot:
+                snap = self._market_flow_snapshot[ticker]
+                foreigner_net = snap.get('foreigner', 0)
+                institution_net = snap.get('institution', 0)
+            else:
+                foreigner_net, institution_net = self._get_investor_data(ticker, end_str)
 
             # 다중 지표 스코어링
             score = 0

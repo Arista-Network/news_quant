@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 import os, sys, asyncio
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from news_parser import NewsParser
@@ -26,6 +27,7 @@ VALID_PERIODS = {1, 7, 30, 365}
 # ── 수급맵 백그라운드 캐시 (키: f"{market}_{period}") ───────────────────────
 _flow_cache: dict = {}   # {"data": [], "loading": False}
 _trend_cache: dict = {}  # {"data": [], "loading": False}
+_cache_built_date: str = ""  # YYYYMMDD — 날짜 변경 시 자동 초기화용
 
 
 def _flow_key(market: str, period: int) -> str:
@@ -80,12 +82,34 @@ async def _refresh_trend(market: str, period: int = 7):
         entry["loading"] = False
 
 
+async def _startup_sequence():
+    """pykrx 동시 호출 방지: flow → trend 순서로 직렬 실행"""
+    await _refresh_flow("KOSPI", 7)
+    await _refresh_trend("KOSPI", 7)
+    await _refresh_flow("KOSPI", 1)
+    await _refresh_trend("KOSPI", 1)
+
+
+async def _daily_cache_refresh():
+    """매 시간 날짜 확인 → 날짜 변경 시 캐시 초기화 후 재수집"""
+    global _cache_built_date
+    while True:
+        await asyncio.sleep(3600)
+        today = datetime.now().strftime("%Y%m%d")
+        if _cache_built_date and _cache_built_date != today:
+            print(f"[캐시] 날짜 변경 감지 ({_cache_built_date}→{today}), 캐시 초기화")
+            _flow_cache.clear()
+            _trend_cache.clear()
+            _cache_built_date = today
+            asyncio.create_task(_startup_sequence())
+
+
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(_refresh_flow("KOSPI", 7))
-    asyncio.create_task(_refresh_trend("KOSPI", 7))
-    asyncio.create_task(_refresh_flow("KOSPI", 1))
-    asyncio.create_task(_refresh_trend("KOSPI", 1))
+    global _cache_built_date
+    _cache_built_date = datetime.now().strftime("%Y%m%d")
+    asyncio.create_task(_startup_sequence())
+    asyncio.create_task(_daily_cache_refresh())
 
 
 @app.get("/healthz")
