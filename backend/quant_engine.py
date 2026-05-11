@@ -246,85 +246,43 @@ class QuantEngine:
         return is_multi, f_col, i_col
 
     def get_market_flow(self, market="KOSPI", top_n=20, period_days=7):
-        """시장 전체 외국인/기관 수급 히트맵 데이터 (일별 집계)"""
+        """시장 전체 외국인/기관 수급 히트맵 데이터 (기간 합계)"""
         max_trading_days = self._trading_days_for_period(period_days)
         try:
             today = datetime.now()
-            flow_accum = {}
-            found_days = 0
-            scan_limit = max(max_trading_days * 2 + 30, 60)
+            end = today - timedelta(days=1)
+            while end.weekday() >= 5:
+                end -= timedelta(days=1)
+            end_str = end.strftime("%Y%m%d")
+            start_str = (end - timedelta(days=max_trading_days * 3 + 10)).strftime("%Y%m%d")
 
-            for days_back in range(1, scan_limit):
-                if found_days >= max_trading_days:
-                    break
-                d = today - timedelta(days=days_back)
-                if d.weekday() >= 5:
-                    continue
-                date_str = d.strftime("%Y%m%d")
+            f_df = stock.get_market_net_purchases_of_equities_by_ticker(start_str, end_str, market, "외국인")
+            i_df = stock.get_market_net_purchases_of_equities_by_ticker(start_str, end_str, market, "기관합계")
 
+            if f_df is not None and not f_df.empty:
                 try:
-                    # 수량 기반 → 금액 기반 순서로 시도
-                    day_df = None
-                    for api_fn in [
-                        lambda ds: stock.get_market_trading_volume_by_ticker(ds, market),
-                        lambda ds: stock.get_market_trading_value_by_ticker(ds, market),
-                    ]:
-                        try:
-                            tmp = api_fn(date_str)
-                            if tmp is not None and not tmp.empty:
-                                day_df = tmp
-                                break
-                        except Exception:
-                            pass
-
-                    if day_df is None or day_df.empty:
-                        print(f"[수급맵] {date_str} 데이터 없음")
-                        continue
-
-                    is_multiindex, f_col, i_col = self._parse_flow_df(day_df)
-                    if found_days == 0:
-                        print(f"[수급맵] {date_str} 컬럼: {list(day_df.columns[:8])}, multi={is_multiindex}")
-                        print(f"[수급맵] f_col={f_col}, i_col={i_col}")
-
-                    for tkr in day_df.index:
-                        if tkr not in flow_accum:
-                            flow_accum[tkr] = {"foreigner": 0, "institution": 0}
-                        try:
-                            if is_multiindex:
-                                f_net = int(day_df.loc[tkr, (f_col, '순매수')]) if f_col else 0
-                                i_net = int(day_df.loc[tkr, (i_col, '순매수')]) if i_col else 0
-                            else:
-                                row = day_df.loc[tkr]
-                                f_net = int(row[f_col]) if f_col else 0
-                                i_net = int(row[i_col]) if i_col else 0
-                            flow_accum[tkr]["foreigner"] += f_net
-                            flow_accum[tkr]["institution"] += i_net
-                        except Exception:
-                            pass
-
-                    found_days += 1
-                except Exception as e:
-                    print(f"[수급맵] {date_str} 오류: {e}")
-                    continue
-
-            if flow_accum:
-                try:
-                    df_list = fdr.StockListing(market)
-                    name_map = dict(zip(df_list['Code'], df_list['Name']))
+                    dl = fdr.StockListing(market)
+                    name_map = dict(zip(dl['Code'], dl['Name']))
                 except Exception:
                     name_map = {}
 
+                f_val = next((c for c in ['순매수거래대금', '순매수거래량'] if c in f_df.columns), None)
+                i_val = next((c for c in ['순매수거래대금', '순매수거래량']
+                              if i_df is not None and not i_df.empty and c in i_df.columns), None)
+
+                all_tkrs = set(f_df.index) | (set(i_df.index) if i_df is not None and not i_df.empty else set())
                 results = []
-                for tkr, data in flow_accum.items():
-                    f_net = data["foreigner"]
-                    i_net = data["institution"]
+                for tkr in all_tkrs:
+                    f_net = int(f_df.loc[tkr, f_val]) if (f_val and tkr in f_df.index) else 0
+                    i_net = int(i_df.loc[tkr, i_val]) if (i_val and i_df is not None and not i_df.empty and tkr in i_df.index) else 0
                     results.append({
                         "name": name_map.get(tkr, tkr),
                         "code": tkr,
                         "foreigner": f_net,
                         "institution": i_net,
-                        "total": f_net + i_net
+                        "total": f_net + i_net,
                     })
+
                 self._market_flow_snapshot = {
                     r['code']: {'foreigner': r['foreigner'], 'institution': r['institution']}
                     for r in results
@@ -333,13 +291,11 @@ class QuantEngine:
                 print(f"[수급맵] 집계 완료: {len(results)}종목")
                 return results[:top_n]
 
-            # 폴백: 개별 종목 병렬 조회
-            print("[수급맵] 일괄 조회 실패, 병렬 개별 조회로 폴백")
-            return self._get_market_flow_fallback(market, top_n)
-
         except Exception as e:
             print(f"[수급맵 오류] {e}")
-            return self._get_market_flow_fallback(market, top_n)
+
+        print("[수급맵] 폴백: 개별 종목 조회")
+        return self._get_market_flow_fallback(market, top_n)
 
     def _get_market_flow_fallback(self, market="KOSPI", top_n=20):
         """수급맵 폴백: 상위 80종목 병렬 개별 조회 (스냅샷 커버리지 확보)"""
@@ -421,65 +377,50 @@ class QuantEngine:
 
     def get_market_daily_flow(self, market="KOSPI", period_days=7):
         """일별 시장 전체 외국인/기관 순매수 합계 반환 (추이 차트용)
+        get_market_trading_value_by_date("KOSPI") 로 전체 시장 일별 수급을 단일 호출로 조회한다.
         period_days=365 의 경우 60거래일을 주간 집계로 반환한다.
         """
         max_td = self._trading_days_for_period(period_days)
         today = datetime.now()
 
-        # 수집 대상 거래일 목록
-        target_dates = []
-        for days_back in range(1, max_td * 3 + 30):
-            d = today - timedelta(days=days_back)
-            if d.weekday() < 5:
-                target_dates.append((d, d.strftime("%Y%m%d")))
-            if len(target_dates) >= max_td:
-                break
+        # 마지막 거래일 기준 날짜 범위 계산
+        end = today - timedelta(days=1)
+        while end.weekday() >= 5:
+            end -= timedelta(days=1)
+        end_str = end.strftime("%Y%m%d")
+        start_str = (end - timedelta(days=max_td * 3 + 10)).strftime("%Y%m%d")
 
-        # 순차 조회 — pykrx 병렬 호출 시 스레드 안전성 문제로 직렬 처리
         results = []
-        for dt_obj, date_str in target_dates:
-            try:
-                day_df = None
-                for api_fn in [
-                    lambda ds=date_str: stock.get_market_trading_volume_by_ticker(ds, market),
-                    lambda ds=date_str: stock.get_market_trading_value_by_ticker(ds, market),
-                ]:
-                    try:
-                        tmp = api_fn()
-                        if tmp is not None and not tmp.empty:
-                            day_df = tmp
-                            break
-                    except Exception:
-                        pass
+        try:
+            # 시장 전체 일별 투자자 수급 — 단일 호출
+            df = stock.get_market_trading_value_by_date(start_str, end_str, market)
+            if df is not None and not df.empty:
+                for idx, row in df.iterrows():
+                    ds = idx.strftime("%Y%m%d") if hasattr(idx, 'strftime') else str(idx).replace('-', '')[:8]
+                    f_total = int(row['외국인합계']) if '외국인합계' in row.index else 0
+                    i_total = int(row['기관합계']) if '기관합계' in row.index else 0
+                    results.append({"date": ds, "foreigner": f_total, "institution": i_total,
+                                    "total": f_total + i_total})
+                    print(f"[일별수급] {ds}: 외={f_total:+,} 기={i_total:+,}")
 
-                if day_df is None or day_df.empty:
-                    print(f"[일별수급] {date_str} 데이터 없음")
-                    continue
-
-                is_multi, f_col, i_col = self._parse_flow_df(day_df)
-                if is_multi:
-                    f_total = int(day_df[(f_col, '순매수')].sum()) if f_col else 0
-                    i_total = int(day_df[(i_col, '순매수')].sum()) if i_col else 0
-                else:
-                    f_total = int(day_df[f_col].sum()) if f_col else 0
-                    i_total = int(day_df[i_col].sum()) if i_col else 0
-
-                results.append({"date": date_str, "foreigner": f_total, "institution": i_total,
-                                "total": f_total + i_total})
-                print(f"[일별수급] {date_str}: 외={f_total:+,} 기={i_total:+,}")
-            except Exception as e:
-                print(f"[일별수급] {date_str} 오류: {e}")
-                continue
-
-        results.sort(key=lambda x: x['date'])
+                results.sort(key=lambda x: x['date'])
+                results = results[-max_td:]  # 최근 max_td 거래일만 유지
+        except Exception as e:
+            print(f"[일별수급] 오류: {e}")
 
         if not results:
-            print("[일별수급] bulk 실패, per-stock 폴백")
+            print("[일별수급] 폴백: 종목별 수급 집계")
+            target_dates = []
+            for days_back in range(1, max_td * 3 + 30):
+                d = today - timedelta(days=days_back)
+                if d.weekday() < 5:
+                    target_dates.append((d, d.strftime("%Y%m%d")))
+                if len(target_dates) >= max_td:
+                    break
             target_date_strs = {ds for _, ds in target_dates}
             results = self._get_daily_flow_per_stock(market, target_date_strs)
             results.sort(key=lambda x: x['date'])
 
-        # 1년 기간은 주간 집계로 변환 (가독성)
         if period_days >= 365 and len(results) > 10:
             return self._resample_weekly(results)
         return results
@@ -662,7 +603,7 @@ class QuantEngine:
                 except Exception:
                     return {}
 
-            with ThreadPoolExecutor(max_workers=8) as ex:
+            with ThreadPoolExecutor(max_workers=2) as ex:
                 futs = {ex.submit(fetch_ticker, t): t for t in tickers}
                 try:
                     for fut in as_completed(futs, timeout=60):
