@@ -37,16 +37,15 @@ def _flow_key(market: str, period: int) -> str:
 async def _refresh_flow(market: str, period: int = 7):
     key = _flow_key(market, period)
     entry = _flow_cache.setdefault(key, {"data": [], "loading": False})
-    if entry["loading"]:
-        return
     entry["loading"] = True
     try:
         loop = asyncio.get_event_loop()
+        timeout = 120.0 if period <= 7 else 300.0
         data = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: quant_engine.get_market_flow(market, period_days=period)
             ),
-            timeout=120.0,
+            timeout=timeout,
         )
         entry["data"] = data or []
         print(f"[수급맵 캐시] {key} 업데이트: {len(entry['data'])}종목")
@@ -61,16 +60,15 @@ async def _refresh_flow(market: str, period: int = 7):
 async def _refresh_trend(market: str, period: int = 7):
     key = _flow_key(market, period)
     entry = _trend_cache.setdefault(key, {"data": [], "loading": False})
-    if entry["loading"]:
-        return
     entry["loading"] = True
     try:
         loop = asyncio.get_event_loop()
+        timeout = 120.0 if period <= 7 else 300.0
         data = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: quant_engine.get_market_daily_flow(market, period_days=period)
             ),
-            timeout=120.0,
+            timeout=timeout,
         )
         entry["data"] = data or []
         print(f"[추이 캐시] {key} 업데이트: {len(entry['data'])}건")
@@ -144,6 +142,7 @@ async def get_market_flow(
     entry = _flow_cache.setdefault(key, {"data": [], "loading": False})
 
     if not entry["data"] and not entry["loading"]:
+        entry["loading"] = True  # 태스크 시작 전 즉시 설정 — 첫 요청도 loading 반환 보장
         asyncio.create_task(_refresh_flow(market, period))
 
     if entry["loading"] and not entry["data"]:
@@ -161,8 +160,8 @@ async def force_refresh_flow(
     if period not in VALID_PERIODS:
         period = 7
     key = _flow_key(market, period)
-    _flow_cache[key] = {"data": [], "loading": False}
-    _trend_cache[key] = {"data": [], "loading": False}
+    _flow_cache[key] = {"data": [], "loading": True}
+    _trend_cache[key] = {"data": [], "loading": True}
     asyncio.create_task(_refresh_flow(market, period))
     asyncio.create_task(_refresh_trend(market, period))
     return {"status": "refreshing", "market": market, "period": period}
@@ -180,6 +179,7 @@ async def get_market_flow_trend(
     entry = _trend_cache.setdefault(key, {"data": [], "loading": False})
 
     if not entry["data"] and not entry["loading"]:
+        entry["loading"] = True  # 태스크 시작 전 즉시 설정 — 첫 요청도 loading 반환 보장
         asyncio.create_task(_refresh_trend(market, period))
 
     if entry["loading"] and not entry["data"]:
@@ -193,8 +193,6 @@ _screener_cache: dict = {}
 
 async def _run_screener_bg(market: str, conditions: dict, cache_key: str):
     entry = _screener_cache.setdefault(cache_key, {"data": [], "loading": False})
-    if entry["loading"]:
-        return
     entry["loading"] = True
     try:
         loop = asyncio.get_event_loop()
@@ -227,6 +225,7 @@ async def get_screener_results(
         entry["data"] = []
         entry["loading"] = False
     if not entry["data"] and not entry["loading"]:
+        entry["loading"] = True  # 태스크 시작 전 즉시 설정 — 첫 요청도 loading 반환 보장
         asyncio.create_task(_run_screener_bg(market, cond_dict, cache_key))
     if entry["loading"] and not entry["data"]:
         return {"status": "loading", "data": [], "total": 0}
