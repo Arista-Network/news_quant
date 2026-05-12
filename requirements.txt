@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 pandas
-pandas-ta
 numba>=0.65.0
 finance-datareader
 pykrx
