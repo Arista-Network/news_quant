@@ -4,6 +4,16 @@ from fastapi.responses import FileResponse, Response
 import os, sys, asyncio
 from datetime import datetime
 
+# .env 파일에서 KRX 인증 정보 로드 (파일 있을 때만)
+_env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from news_parser import NewsParser
 from quant_engine import QuantEngine
@@ -102,10 +112,30 @@ async def _daily_cache_refresh():
             asyncio.create_task(_startup_sequence())
 
 
+def _init_krx_auth():
+    """KRX 환경 변수로 pykrx 세션 초기화"""
+    krx_id = os.environ.get("KRX_ID")
+    krx_pw = os.environ.get("KRX_PW")
+    if not (krx_id and krx_pw):
+        print("[KRX] 인증 정보 없음 — 외국인/기관 수급 데이터 제한됨")
+        return
+    try:
+        from pykrx.website.comm.auth import build_krx_session, set_auth_session
+        session = build_krx_session(krx_id, krx_pw)
+        if session and session.is_authenticated:
+            set_auth_session(session)
+            print("[KRX] 로그인 완료 — 수급 데이터 수집 가능")
+        else:
+            print("[KRX] 로그인 실패 — 자격증명을 확인하세요")
+    except Exception as e:
+        print(f"[KRX] 인증 초기화 오류: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     global _cache_built_date
     _cache_built_date = datetime.now().strftime("%Y%m%d")
+    _init_krx_auth()
     asyncio.create_task(_startup_sequence())
     asyncio.create_task(_daily_cache_refresh())
 
