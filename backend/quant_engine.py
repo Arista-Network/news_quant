@@ -1,4 +1,20 @@
-from pykrx import stock
+import os as _os
+# pykrx 1.2.x reads KRX_ID/KRX_PW from env at import time and auto-authenticates.
+# On cloud servers (Render), KRX auth returns non-JSON → crash before server starts.
+# Temporarily hide credentials so pykrx imports with anonymous session (no network call).
+# _init_krx_auth() in main.py startup will re-auth explicitly after import completes.
+_krx_id = _os.environ.pop('KRX_ID', None)
+_krx_pw = _os.environ.pop('KRX_PW', None)
+try:
+    from pykrx import stock
+except Exception as _pykrx_err:
+    print(f"[pykrx] 임포트 실패: {_pykrx_err}")
+    stock = None
+finally:
+    if _krx_id is not None:
+        _os.environ['KRX_ID'] = _krx_id
+    if _krx_pw is not None:
+        _os.environ['KRX_PW'] = _krx_pw
 import FinanceDataReader as fdr
 import pandas_ta as ta
 import pandas as pd
