@@ -712,7 +712,7 @@ document.addEventListener('DOMContentLoaded', () => {
             legend:{ data:['외국인','기관'], bottom:4, textStyle:{fontSize:12}, itemWidth:14, itemHeight:10 },
             grid:{ top:16, right:16, bottom:44, left:56 },
             xAxis:{ type:'category', data:xLabels, axisLabel:{fontSize:11, rotate:data.length>15?30:0}, axisTick:{alignWithLabel:true} },
-            yAxis:{ type:'value', name:'억원', nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10, formatter:v=>v>=10000?`${(v/10000).toFixed(0)}조`:v.toLocaleString()}, splitLine:{lineStyle:{type:'dashed',opacity:0.4}} },
+            yAxis:{ type:'value', name:'억원', nameTextStyle:{fontSize:10}, axisLabel:{fontSize:10, formatter:v=>{const a=Math.abs(v);return a>=10000?(v/10000).toFixed(0)+'조':v.toLocaleString();}}, splitLine:{lineStyle:{type:'dashed',opacity:0.4}} },
             series:[
                 { name:'외국인', type:'bar', barWidth, barGap:'10%', data:fData.map(v=>({value:v,itemStyle:{color:v>=0?'#2563eb':'#93c5fd'}})) },
                 { name:'기관',   type:'bar', barWidth, barGap:'10%', data:iData.map(v=>({value:v,itemStyle:{color:v>=0?'#f59e0b':'#fcd34d'}})) }

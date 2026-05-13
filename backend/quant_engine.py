@@ -84,13 +84,25 @@ class QuantEngine:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=200)
         end_str = end_date.strftime("%Y%m%d")
+        start_str = start_date.strftime("%Y%m%d")
 
         try:
-            df = fdr.DataReader(ticker, start_date, end_date)
-            if df is None or df.empty or len(df) < 30:
-                return None
+            # pykrx OHLCV 우선 (Render 등 FDR 차단 환경에서도 동작)
+            df = None
+            try:
+                _df = stock.get_market_ohlcv_by_date(start_str, end_str, ticker)
+                if _df is not None and not _df.empty and len(_df) >= 30:
+                    _df.columns = ['open', 'high', 'low', 'close', 'volume', 'change']
+                    _df['change'] = _df['change'] / 100  # % → 소수
+                    df = _df
+            except Exception:
+                pass
 
-            df.columns = [c.lower() for c in df.columns]
+            if df is None:
+                df = fdr.DataReader(ticker, start_date, end_date)
+                if df is None or df.empty or len(df) < 30:
+                    return None
+                df.columns = [c.lower() for c in df.columns]
 
             try:
                 df.ta.rsi(length=14, append=True)
@@ -543,10 +555,23 @@ class QuantEngine:
         try:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=100)
-            df = fdr.DataReader(ticker, start_date, end_date)
-            if df is None or df.empty:
-                return None
-            df.columns = [c.lower() for c in df.columns]
+            end_str = end_date.strftime("%Y%m%d")
+            start_str = start_date.strftime("%Y%m%d")
+
+            df = None
+            try:
+                _df = stock.get_market_ohlcv_by_date(start_str, end_str, ticker)
+                if _df is not None and not _df.empty:
+                    _df.columns = ['open', 'high', 'low', 'close', 'volume', 'change']
+                    df = _df
+            except Exception:
+                pass
+
+            if df is None:
+                df = fdr.DataReader(ticker, start_date, end_date)
+                if df is None or df.empty:
+                    return None
+                df.columns = [c.lower() for c in df.columns]
             quant = self.analyze_stock(ticker)
             price_history = []
             for date, row in df.tail(60).iterrows():
